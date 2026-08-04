@@ -64,13 +64,15 @@ pub struct PeerInfo {
 pub enum Frame {
     /// First frame in both directions on every connection.
     ///
-    /// `listen_addr` is where this node accepts connections, which is not the
-    /// same as the address a peer sees us dial *from*; the peer needs the
-    /// former to pass us on via gossip.
+    /// Carries only the *port* we accept connections on, never a full address.
+    /// A node that binds `0.0.0.0` has no idea which of its addresses a peer
+    /// can actually reach, and advertising `0.0.0.0` would be useless to
+    /// gossip. The receiver already knows the IP this connection came from, so
+    /// it pairs that with this port to get an address that demonstrably works.
     Hello {
         name: String,
         public_key: Vec<u8>,
-        listen_addr: String,
+        listen_port: u16,
     },
 
     /// Gossip. The recipient dials anyone here it is not already connected to.
@@ -86,12 +88,15 @@ pub enum Frame {
 }
 
 impl Frame {
-    /// Encode as a single newline-terminated line, ready to write.
-    pub fn to_line(&self) -> Result<String, ProtocolError> {
-        let mut line = serde_json::to_string(self)?;
+    /// Encode to the body of one line, **without** a terminator.
+    ///
+    /// Appending the newline belongs to the codec that writes this, not here;
+    /// doing it in both places would put a blank line on the wire. What this
+    /// guarantees instead is that the result contains no newline of its own, so
+    /// the codec's terminator is unambiguous.
+    pub fn encode(&self) -> Result<String, ProtocolError> {
+        let line = serde_json::to_string(self)?;
 
-        // Checked before the terminator is appended, so the limit means the
-        // same thing here as it does to the codec on the reading side.
         if line.len() > MAX_FRAME_BYTES {
             return Err(ProtocolError::TooLarge {
                 size: line.len(),
@@ -99,17 +104,16 @@ impl Frame {
             });
         }
 
-        line.push('\n');
         Ok(line)
     }
 
-    /// Decode one line, with or without its trailing newline.
+    /// Decode one line, with or without a trailing newline.
     ///
     /// Every input here came from the network, so this reports errors and never
     /// panics.
-    pub fn from_line(line: &str) -> Result<Frame, ProtocolError> {
+    pub fn decode(line: &str) -> Result<Frame, ProtocolError> {
         // Rejected before parsing, so an oversized payload is never fully
-        // deserialised just to be thrown away.
+        // deserialised only to be discarded.
         if line.len() > MAX_FRAME_BYTES {
             return Err(ProtocolError::TooLarge {
                 size: line.len(),

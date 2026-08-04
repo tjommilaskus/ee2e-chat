@@ -4,7 +4,7 @@ fn hello() -> Frame {
     Frame::Hello {
         name: "alice".to_string(),
         public_key: vec![7u8; 32],
-        listen_addr: "192.168.1.42:9999".to_string(),
+        listen_port: 9999,
     }
 }
 
@@ -35,8 +35,8 @@ fn chat() -> Frame {
 #[test]
 fn test_every_variant_round_trips() {
     for frame in [hello(), peers(), chat()] {
-        let line = frame.to_line().unwrap();
-        let decoded = Frame::from_line(&line).unwrap();
+        let line = frame.encode().unwrap();
+        let decoded = Frame::decode(&line).unwrap();
         assert_eq!(decoded, frame);
     }
 }
@@ -44,54 +44,51 @@ fn test_every_variant_round_trips() {
 #[test]
 fn test_empty_peers_list_round_trips() {
     let frame = Frame::Peers { peers: vec![] };
-    let line = frame.to_line().unwrap();
-    assert_eq!(Frame::from_line(&line).unwrap(), frame);
+    let line = frame.encode().unwrap();
+    assert_eq!(Frame::decode(&line).unwrap(), frame);
 }
 
-// Framing correctness: a frame must occupy exactly one line, so the encoded
-// form has to end with a newline and contain no others.
+// The codec supplies the terminator, so an encoded frame must contain no
+// newline whatsoever -- otherwise one frame would arrive as two.
 #[test]
-fn test_encoded_frame_ends_with_exactly_one_newline() {
+fn test_encoded_frame_contains_no_newline() {
     for frame in [hello(), peers(), chat()] {
-        let line = frame.to_line().unwrap();
-        assert!(line.ends_with('\n'), "frame must be newline-terminated");
-        assert_eq!(
-            line.matches('\n').count(),
-            1,
-            "frame must contain no interior newlines"
+        assert!(
+            !frame.encode().unwrap().contains('\n'),
+            "encoded frame must not contain a newline"
         );
     }
 }
 
 // The attack this defends against: a peer picks a name containing a newline,
-// hoping to split one frame into two and inject a forged second frame.
-// serde_json escapes the newline as the two characters \ and n, so it never
-// reaches the wire raw.
+// hoping to split one frame into two and have the second parsed as a forged
+// frame in its own right. serde_json escapes the newline as the two characters
+// \ and n, so a raw one never reaches the wire.
 #[test]
 fn test_newline_in_a_field_cannot_split_the_frame() {
     let frame = Frame::Hello {
-        name: "alice\n{\"type\":\"Chat\"}".to_string(),
+        name: "alice\n{\"type\":\"Chat\",\"ciphertext\":[],\"nonce\":[]}".to_string(),
         public_key: vec![7u8; 32],
-        listen_addr: "127.0.0.1:9999".to_string(),
+        listen_port: 9999,
     };
 
-    let line = frame.to_line().unwrap();
-    assert_eq!(
-        line.matches('\n').count(),
-        1,
-        "an embedded newline must not create a second line"
+    let line = frame.encode().unwrap();
+    assert!(
+        !line.contains('\n'),
+        "an embedded newline must not survive into the encoding"
     );
-    assert_eq!(Frame::from_line(&line).unwrap(), frame);
+    assert_eq!(Frame::decode(&line).unwrap(), frame);
 }
 
+// The codec strips the terminator before handing us a line, but tolerating one
+// costs nothing and makes the function usable against a raw capture.
 #[test]
-fn test_from_line_accepts_input_with_or_without_the_terminator() {
+fn test_decode_tolerates_a_trailing_newline() {
     let frame = hello();
-    let with_newline = frame.to_line().unwrap();
-    let without = with_newline.trim_end_matches('\n');
+    let line = frame.encode().unwrap();
 
-    assert_eq!(Frame::from_line(&with_newline).unwrap(), frame);
-    assert_eq!(Frame::from_line(without).unwrap(), frame);
+    assert_eq!(Frame::decode(&line).unwrap(), frame);
+    assert_eq!(Frame::decode(&format!("{line}\n")).unwrap(), frame);
 }
 
 // Everything below is input an attacker controls, so it must produce errors
@@ -110,12 +107,12 @@ fn test_malformed_input_errors_without_panicking() {
         r#"{"type":"Hello"}"#,                       // missing fields
         r#"{"type":"Nonexistent","x":1}"#,           // unknown variant
         r#"{"type":"Chat","ciphertext":[1],"nonce":[1,2,3]}"#, // nonce wrong length
-        r#"{"type":"Hello","name":5,"public_key":[],"listen_addr":""}"#, // wrong type
+        r#"{"type":"Hello","name":5,"public_key":[],"listen_port":1}"#, // wrong type
     ];
 
     for input in bad_inputs {
         assert!(
-            Frame::from_line(input).is_err(),
+            Frame::decode(input).is_err(),
             "expected an error for input: {input:?}"
         );
     }
@@ -125,7 +122,7 @@ fn test_malformed_input_errors_without_panicking() {
 fn test_oversized_line_is_rejected() {
     let oversized = "x".repeat(MAX_FRAME_BYTES + 1);
 
-    match Frame::from_line(&oversized) {
+    match Frame::decode(&oversized) {
         Err(ProtocolError::TooLarge { size, .. }) => {
             assert_eq!(size, MAX_FRAME_BYTES + 1)
         }
@@ -140,11 +137,11 @@ fn test_oversized_valid_json_is_still_rejected() {
     let huge = Frame::Hello {
         name: "a".repeat(MAX_FRAME_BYTES),
         public_key: vec![0u8; 32],
-        listen_addr: "127.0.0.1:1".to_string(),
+        listen_port: 1,
     };
 
     assert!(matches!(
-        huge.to_line(),
+        huge.encode(),
         Err(ProtocolError::TooLarge { .. })
     ));
 }
@@ -152,6 +149,6 @@ fn test_oversized_valid_json_is_still_rejected() {
 #[test]
 fn test_frame_type_is_visible_in_the_encoding() {
     // A self-describing tag keeps the wire format readable while debugging.
-    assert!(hello().to_line().unwrap().contains(r#""type":"Hello""#));
-    assert!(chat().to_line().unwrap().contains(r#""type":"Chat""#));
+    assert!(hello().encode().unwrap().contains(r#""type":"Hello""#));
+    assert!(chat().encode().unwrap().contains(r#""type":"Chat""#));
 }
