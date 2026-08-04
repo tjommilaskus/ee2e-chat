@@ -291,23 +291,36 @@ async fn test_simultaneous_dial_settles_on_one_connection() {
     assert_eq!(bob.peers()[0].name, "alice");
 }
 
+/// One node must handle several inbound connections arriving at once.
+///
+/// Only the hub's side is asserted here; what the dialling nodes go on to do
+/// with each other once gossip introduces them belongs to `gossip_tests`.
 #[tokio::test]
-async fn test_three_nodes_can_all_connect_to_one() {
+async fn test_one_node_accepts_several_simultaneous_connections() {
     let (hub, hub_addr, _rh) = start("hub").await;
     let (a, _, _ra) = start("a").await;
     let (b, _, _rb) = start("b").await;
     let (c, _, _rc) = start("c").await;
 
-    a.connect(hub_addr).await.expect("dial");
-    b.connect(hub_addr).await.expect("dial");
-    c.connect(hub_addr).await.expect("dial");
+    let (ra, rb, rc) = tokio::join!(
+        a.connect(hub_addr),
+        b.connect(hub_addr),
+        c.connect(hub_addr)
+    );
+    ra.expect("dial");
+    rb.expect("dial");
+    rc.expect("dial");
 
     assert!(
         wait_until(|| hub.peers().len() == 3).await,
         "hub should hold three peers, got {}",
         hub.peers().len()
     );
-    assert!(wait_until(|| a.peers().len() == 1).await);
+
+    let names: Vec<String> = hub.peers().into_iter().map(|p| p.name).collect();
+    for expected in ["a", "b", "c"] {
+        assert!(names.contains(&expected.to_string()), "missing {expected} in {names:?}");
+    }
 }
 
 #[tokio::test]

@@ -230,7 +230,7 @@ than the reverse.
 
 ---
 
-## Stage 7 — Gossip
+## Stage 7 — Gossip ✅ COMPLETE
 
 `Peers` frames after each handshake and on membership change; recipients dial
 anything in `undialed()`. Three nodes started with a single `--connect` between
@@ -238,6 +238,15 @@ them converge to a full mesh.
 
 **Behaviour to verify:** convergence from a chain bootstrap; no dial storms; no
 duplicate connections once the Stage 3 tiebreak is exercised for real.
+
+**Known test gap.** Peers with a dial already in flight are tracked so a second
+gossip frame cannot dial them again. Removing that tracking fails no test: the
+Stage 3 tiebreak resolves duplicates on its own, so the mesh still converges.
+It is kept because supersession drops whatever was queued on the connection it
+replaces, which loses messages sent during that window — and every test here
+waits for convergence before sending, so none of them enters it. Covering it
+would need a test that sends while the mesh is still settling, which is
+inherently racy; it is recorded here rather than papered over.
 
 ---
 

@@ -144,7 +144,7 @@ pub fn run(node: Node, mut events: UnboundedReceiver<Event>, handle: tokio::runt
 
 fn header_text(name: &str) -> String {
     format!(
-        "⌐ RETRO CHAT ¬  User: {name}  ⌐ {} ¬",
+        "⌐ TIO CHAT ¬  User: {name}  ⌐ {} ¬",
         Local::now().format("%H:%M:%S")
     )
 }

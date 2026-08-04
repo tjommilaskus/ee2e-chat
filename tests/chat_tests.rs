@@ -117,8 +117,10 @@ async fn test_a_message_reaches_every_peer() {
 
     a.connect(hub_addr).await.expect("dial");
     b.connect(hub_addr).await.expect("dial");
+    // Gossip introduces a and b to each other, so every node ends up holding
+    // two peers rather than just the one it dialled.
     assert!(wait_until(|| hub.peers().len() == 2).await);
-    assert!(wait_until(|| a.peers().len() == 1 && b.peers().len() == 1).await);
+    assert!(wait_until(|| a.peers().len() == 2 && b.peers().len() == 2).await);
 
     hub.say("to everyone");
     skip_own_echo(&mut hub_events, "hub").await;
@@ -205,6 +207,26 @@ async fn handshake_as(
     (framed, identity, their_key)
 }
 
+/// Read frames until a `Chat` arrives.
+///
+/// A node gossips its peer list as soon as it admits us, so a `Peers` frame
+/// generally arrives before anything that was typed.
+async fn next_chat(wire: &mut Framed<TcpStream, LinesCodec>) -> (Vec<u8>, [u8; 24]) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(line) = wire.next().await {
+            let line = line.expect("valid line");
+            match Frame::decode(&line).expect("valid frame") {
+                Frame::Chat { ciphertext, nonce } => return Some((ciphertext, nonce)),
+                _ => continue,
+            }
+        }
+        None
+    })
+    .await
+    .expect("should not time out")
+    .expect("a chat frame should arrive")
+}
+
 /// The claim the whole project rests on: what crosses the wire is unreadable.
 #[tokio::test]
 async fn test_plaintext_never_appears_on_the_wire() {
@@ -215,21 +237,21 @@ async fn test_plaintext_never_appears_on_the_wire() {
     let secret = "the treasure is buried under the oak";
     alice.say(secret);
 
-    let line = wire.next().await.expect("a frame").expect("valid line");
+    let (ciphertext, _) = next_chat(&mut wire).await;
+    let rendered = Frame::Chat { ciphertext: ciphertext.clone(), nonce: [0u8; 24] }
+        .encode()
+        .unwrap();
 
     assert!(
-        !line.contains(secret),
-        "plaintext appeared on the wire: {line}"
+        !rendered.contains(secret),
+        "plaintext appeared on the wire: {rendered}"
     );
     assert!(
-        !line.contains("alice"),
-        "the sender's name leaked in plaintext: {line}"
+        !rendered.contains("alice"),
+        "the sender's name leaked in plaintext: {rendered}"
     );
 
     // And the bytes themselves, not just the JSON text.
-    let Frame::Chat { ciphertext, .. } = Frame::decode(&line).unwrap() else {
-        panic!("expected a Chat frame");
-    };
     assert!(
         !ciphertext
             .windows(secret.len())
@@ -247,10 +269,7 @@ async fn test_an_eavesdropper_cannot_decrypt_what_it_captures() {
     assert!(wait_until(|| alice.peers().len() == 1).await);
 
     alice.say("for the observer only");
-    let line = wire.next().await.expect("a frame").expect("valid line");
-    let Frame::Chat { ciphertext, nonce } = Frame::decode(&line).unwrap() else {
-        panic!("expected a Chat frame");
-    };
+    let (ciphertext, nonce) = next_chat(&mut wire).await;
 
     // An unrelated party with their own keypair gets nowhere.
     let mallory = crypto::generate_keypair();
@@ -269,10 +288,7 @@ async fn test_the_intended_recipient_can_decrypt() {
     assert!(wait_until(|| alice.peers().len() == 1).await);
 
     alice.say("readable by the recipient");
-    let line = wire.next().await.expect("a frame").expect("valid line");
-    let Frame::Chat { ciphertext, nonce } = Frame::decode(&line).unwrap() else {
-        panic!("expected a Chat frame");
-    };
+    let (ciphertext, nonce) = next_chat(&mut wire).await;
 
     let plaintext = crypto::open(&ciphertext, &nonce, &observer.secret_key, &alice_key)
         .expect("the recipient should be able to decrypt");

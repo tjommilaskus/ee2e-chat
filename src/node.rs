@@ -13,9 +13,9 @@
 use crate::crypto::{self, Keypair, KEY_LEN};
 use crate::messages::Message;
 use crate::peers::{Admission, Peer, PeerRegistry, Rejection};
-use crate::protocol::{Frame, ProtocolError, MAX_FRAME_BYTES};
+use crate::protocol::{Frame, PeerInfo, ProtocolError, MAX_FRAME_BYTES};
 use futures::{SinkExt, StreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
@@ -34,6 +34,14 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const SEND_QUEUE_DEPTH: usize = 64;
 
 const MAX_NAME_LEN: usize = 32;
+
+/// Most entries honoured from one gossip frame.
+///
+/// Gossip is the one place a peer can influence where we open connections, so
+/// it is capped. Nothing in a gossip entry is trusted beyond deciding whether
+/// to dial: the handshake establishes the real identity, so a forged key only
+/// ever wastes one connection attempt.
+const MAX_GOSSIP_PEERS: usize = 64;
 
 /// Something worth telling the user about. Stage 5 prints these; the cursive
 /// UI will consume the same stream unchanged.
@@ -130,6 +138,13 @@ pub struct NodeConfig {
 struct State {
     registry: PeerRegistry,
     connections: HashMap<Vec<u8>, mpsc::Sender<Frame>>,
+    /// Peers with a dial already in flight.
+    ///
+    /// A dialled peer is not in the registry until its handshake finishes, so
+    /// without this a second gossip frame arriving in that window would dial
+    /// them again. The tiebreak would resolve the duplicate, but by replacing
+    /// the live connection -- so the mesh would churn while it settled.
+    dialing: HashSet<Vec<u8>>,
 }
 
 struct Inner {
@@ -168,6 +183,7 @@ impl Node {
                 state: Mutex::new(State {
                     registry,
                     connections: HashMap::new(),
+                    dialing: HashSet::new(),
                 }),
                 events,
             }),
@@ -374,6 +390,10 @@ impl Node {
                     name: peer.name.clone(),
                     fingerprint: peer.fingerprint.clone(),
                 });
+                // Only on a genuine admission. Doing it for a superseded
+                // connection would announce a membership change that did not
+                // happen, and keep the room gossiping about itself.
+                self.announce_peers();
             }
         }
 
@@ -416,11 +436,8 @@ impl Node {
         match Frame::decode(line)? {
             // A second Hello is a protocol violation: identity is settled once.
             Frame::Hello { .. } => Err(ConnError::ExpectedHello),
-            Frame::Peers { .. } => {
-                self.emit(Event::Notice(format!(
-                    "ignoring gossip from {} (not implemented yet)",
-                    peer.name
-                )));
+            Frame::Peers { peers } => {
+                self.handle_gossip(peer, peers);
                 Ok(())
             }
             Frame::Chat { ciphertext, nonce } => {
@@ -428,6 +445,85 @@ impl Node {
                 Ok(())
             }
         }
+    }
+
+    /// Tell everyone who we are connected to.
+    ///
+    /// Sent after each new peer is admitted, which both introduces the newcomer
+    /// to the room and hands the newcomer the room. It terminates because an
+    /// admission only happens once per peer: when nobody new is being admitted,
+    /// nothing is being sent.
+    fn announce_peers(&self) {
+        let (frame, targets) = {
+            let state = self.inner.state.lock().unwrap();
+            let peers: Vec<PeerInfo> = state.registry.all().map(|peer| peer.to_info()).collect();
+            let targets: Vec<_> = state.connections.values().cloned().collect();
+            (Frame::Peers { peers }, targets)
+        };
+
+        for tx in targets {
+            // Best-effort: a peer too backed up to accept a peer list will get
+            // the next one.
+            let _ = tx.try_send(frame.clone());
+        }
+    }
+
+    /// Dial anyone in a gossip frame we are not already connected to.
+    fn handle_gossip(&self, from: &Peer, mut peers: Vec<PeerInfo>) {
+        if peers.len() > MAX_GOSSIP_PEERS {
+            self.emit(Event::Warning(format!(
+                "{} gossiped {} peers; only the first {MAX_GOSSIP_PEERS} were considered",
+                from.name,
+                peers.len()
+            )));
+            peers.truncate(MAX_GOSSIP_PEERS);
+        }
+
+        // Entries that could never produce a usable connection are discarded
+        // here rather than wasting a dial on them.
+        peers.retain(|info| {
+            info.public_key.len() == KEY_LEN
+                && !info.name.trim().is_empty()
+                && info.listen_addr.parse::<SocketAddr>().is_ok()
+        });
+
+        let to_dial = {
+            let mut state = self.inner.state.lock().unwrap();
+            let candidates = state.registry.undialed(&peers);
+
+            // Marked as in-flight in the same critical section that selected
+            // them, so two gossip frames arriving at once cannot both pick the
+            // same peer.
+            let mut chosen = Vec::new();
+            for info in candidates {
+                if state.dialing.insert(info.public_key.clone()) {
+                    chosen.push(info);
+                }
+            }
+            chosen
+        };
+
+        for info in to_dial {
+            let Ok(addr) = info.listen_addr.parse::<SocketAddr>() else {
+                self.finished_dialing(&info.public_key);
+                continue;
+            };
+
+            let node = self.clone();
+            tokio::spawn(async move {
+                match TcpStream::connect(addr).await {
+                    Ok(stream) => node.serve(stream, addr.ip(), false).await,
+                    Err(e) => node.emit(Event::Warning(format!("could not reach {addr}: {e}"))),
+                }
+                // Cleared however the attempt ended, so a peer that drops out
+                // can be dialled again when it is next gossiped.
+                node.finished_dialing(&info.public_key);
+            });
+        }
+    }
+
+    fn finished_dialing(&self, public_key: &[u8]) {
+        self.inner.state.lock().unwrap().dialing.remove(public_key);
     }
 
     /// Decrypt and attribute an incoming message.
