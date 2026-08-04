@@ -29,6 +29,12 @@ Builds from source and installs to `~/.local/bin`, so it never needs root.
 `--prefix DIR` puts it elsewhere and `--uninstall` removes it again. Rust is
 the only requirement, and the script says how to get it if it is missing.
 
+To build without installing anything:
+
+```
+cargo build --release && ./target/release/ee2e-chat
+```
+
 ## Running it
 
 Start it with no arguments and it asks who you are and who to connect to:
@@ -73,7 +79,8 @@ without `--name`, say — prefills the setup screen rather than being ignored.
 | `/help` `/quit` | |
 
 `--plain` gives line-by-line output instead of the full interface, which is
-easier to pipe somewhere.
+easier to pipe somewhere. It has no setup screen to ask on, so it needs
+`--name`.
 
 ## Your identity
 
@@ -128,11 +135,12 @@ Gossip is used only to discover peers, never to route messages.
 | `messages.rs` | the plaintext message type |
 | `protocol.rs` | wire frames and newline framing |
 | `peers.rs` | peer registry, name clashes, dial collisions |
+| `identity.rs` | reading and writing the stored keypair |
 | `node.rs` | listening, dialling, handshakes, gossip |
 | `ui.rs` | the interface |
 
-The first four do no I/O at all, which is what makes the awkward parts —
-collision resolution in particular — testable without opening a socket.
+The first four touch neither disk nor network, which is what makes the awkward
+parts — collision resolution in particular — testable without opening a socket.
 
 ### Cryptography
 
@@ -165,7 +173,8 @@ Stated plainly rather than left to be discovered.
   compromising one later exposes past messages.
 - **Metadata is not hidden.** Peers see who is present and when messages are
   sent. Only content is protected.
-- **Nothing is stored.** Messages live in memory for the session.
+- **Messages are not stored.** They live in memory for the session and are gone
+  when you quit. Only the keypair is written to disk.
 
 This was written to learn how the pieces fit together. It has not been audited,
 and the limitations above are the ones that are *known*.
