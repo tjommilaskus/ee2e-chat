@@ -2,7 +2,10 @@
 
 **Encrypted chat with nobody in the middle. No server, no account, no cloud.**
 
-<img width="600" height="400" alt="appshot" src="https://github.com/user-attachments/assets/2395c53b-b6eb-4ddd-881a-11252a7fd274" />
+![Two terminals connecting and exchanging encrypted messages](docs/demo.gif)
+
+*Two machines, no server in between. Bob joins with a room code, and each side
+shows the other's key fingerprint so they can check nobody is in the middle.*
 
 Most "private" messengers still route everything through somebody's
 infrastructure. Even the good ones can tell you who talked to whom, and can be
