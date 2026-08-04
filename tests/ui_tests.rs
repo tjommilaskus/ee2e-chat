@@ -180,6 +180,11 @@ async fn test_the_theme_uses_the_retro_palette() {
     let theme = ui::theme();
     assert_eq!(theme.palette[PaletteColor::Primary], Color::Rgb(0x2E, 0xE6, 0x4D));
     assert_eq!(theme.palette[PaletteColor::TitlePrimary], Color::Rgb(0x2E, 0xE6, 0xD6));
-    assert_eq!(theme.palette[PaletteColor::Background], Color::Rgb(0x08, 0x0C, 0x08));
+    assert_eq!(theme.palette[PaletteColor::Background], Color::Rgb(0x0A, 0x0E, 0x16));
+    assert_ne!(
+        theme.palette[PaletteColor::View],
+        theme.palette[PaletteColor::Background],
+        "panels should sit a shade above the backdrop"
+    );
     assert!(!theme.shadow, "shadows would break the flat retro look");
 }

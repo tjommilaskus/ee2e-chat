@@ -32,7 +32,19 @@ const DIM_GREEN: Color = Color::Rgb(0x1C, 0x8C, 0x33);
 const CYAN: Color = Color::Rgb(0x2E, 0xE6, 0xD6);
 const AMBER: Color = Color::Rgb(0xFF, 0xB0, 0x00);
 const RED: Color = Color::Rgb(0xFF, 0x4D, 0x4D);
-const BLACK: Color = Color::Rgb(0x08, 0x0C, 0x08);
+
+/// Behind everything, in the margins either side of the centred interface.
+const BACKDROP: Color = Color::Rgb(0x0A, 0x0E, 0x16);
+/// Inside the panels. A shade lighter than the backdrop so the interface reads
+/// as a panel sitting on a surface rather than a hole cut in one.
+const PANEL: Color = Color::Rgb(0x14, 0x1B, 0x2A);
+
+/// Widest the interface is allowed to grow.
+///
+/// A chat log stretched across a full-width terminal is unpleasant to read and
+/// looks nothing like the intended layout, so beyond this the interface stops
+/// growing and centres itself instead.
+const MAX_WIDTH: usize = 100;
 
 const HELP: &str = "ESC:quit | Enter:send | Commands: /help, /clear, /peers, /quit";
 
@@ -44,8 +56,8 @@ pub fn theme() -> Theme {
     };
 
     let palette = &mut theme.palette;
-    palette[PaletteColor::Background] = BLACK;
-    palette[PaletteColor::View] = BLACK;
+    palette[PaletteColor::Background] = BACKDROP;
+    palette[PaletteColor::View] = PANEL;
     palette[PaletteColor::Primary] = GREEN;
     palette[PaletteColor::Secondary] = DIM_GREEN;
     palette[PaletteColor::Tertiary] = CYAN;
@@ -53,7 +65,7 @@ pub fn theme() -> Theme {
     palette[PaletteColor::TitleSecondary] = CYAN;
     palette[PaletteColor::Highlight] = AMBER;
     palette[PaletteColor::HighlightInactive] = AMBER;
-    palette[PaletteColor::HighlightText] = BLACK;
+    palette[PaletteColor::HighlightText] = BACKDROP;
 
     theme
 }
@@ -69,7 +81,7 @@ pub fn build(siv: &mut Cursive, node: Node) {
     let input = EditView::new()
         // The one place the palette is bypassed: an amber bar reads as "type
         // here" far more directly than a coloured caret does.
-        .style(ColorStyle::new(BLACK, AMBER))
+        .style(ColorStyle::new(BACKDROP, AMBER))
         .on_submit(move |siv, text| submit(siv, &sending, text))
         .with_name(INPUT);
 
@@ -88,10 +100,15 @@ pub fn build(siv: &mut Cursive, node: Node) {
         .child(Panel::new(input).title("Message"))
         .child(Panel::new(TextView::new(HELP)));
 
-    // `add_fullscreen_layer` already stretches its child, so wrapping the
-    // layout in `full_screen()` as well double-counts the constraint and leaves
-    // the last panel a row short.
-    siv.add_fullscreen_layer(layout);
+    // `add_layer` centres its child, unlike `add_fullscreen_layer` which pins
+    // it to the whole screen. Capping the width and letting it centre keeps the
+    // interface readable on a wide terminal; on a narrow one the cap never
+    // binds and it fills the width as before.
+    // `full_width` makes the layout claim everything offered rather than
+    // shrinking to its content, and `max_width` limits what is offered. Together
+    // they give min(terminal width, MAX_WIDTH). `max_width` alone would only cap
+    // it, leaving the interface as narrow as its longest line.
+    siv.add_layer(layout.full_width().max_width(MAX_WIDTH).full_height());
     siv.focus_name(INPUT).ok();
 
     siv.add_global_callback(cursive::event::Key::Esc, |siv| siv.quit());
