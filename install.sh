@@ -63,6 +63,32 @@ done
 DEST="$PREFIX/bin"
 TARGET="$DEST/$BIN"
 
+# First match for a name in PATH order.
+#
+# Run in a subshell so the IFS change is contained, and searched by hand rather
+# than with `command -v`, which may answer from a hash table built before this
+# script created anything.
+find_on_path() (
+    IFS=:
+    for dir in $PATH; do
+        [ -n "$dir" ] || dir=.
+        if [ -f "$dir/$1" ] && [ -x "$dir/$1" ]; then
+            printf '%s\n' "$dir/$1"
+            return 0
+        fi
+    done
+    return 1
+)
+
+# Which package a file belongs to, where the system can say.
+owner_of() {
+    if command -v pacman >/dev/null 2>&1; then
+        pacman -Qo "$1" 2>/dev/null | sed -n 's/.* is owned by \(.*\)/\1/p'
+    elif command -v dpkg >/dev/null 2>&1; then
+        dpkg -S "$1" 2>/dev/null | cut -d: -f1
+    fi
+}
+
 if [ "$UNINSTALL" -eq 1 ]; then
     if [ -e "$TARGET" ]; then
         rm -f "$TARGET"
@@ -176,6 +202,11 @@ BUILT="$SRC/target/release/$BIN"
 
 # --- install -----------------------------------------------------------------
 
+# Noted before installing, so our own copy cannot be mistaken for somebody
+# else's. `chat` is a common enough name to already be taken -- ppp ships one.
+PREEXISTING=$(find_on_path "$BIN" || true)
+[ "$PREEXISTING" = "$TARGET" ] && PREEXISTING=''
+
 mkdir -p "$DEST" || die "could not create $DEST"
 [ -w "$DEST" ] || die "$DEST is not writable; try --prefix \"\$HOME/.local\""
 
@@ -204,6 +235,29 @@ else
     say "    export PATH=\"$DEST:\$PATH\""
     say ""
     say "Until then, run it with:  ${B}$TARGET${R}"
+fi
+
+# --- name clash ---------------------------------------------------------------
+
+if [ -n "$PREEXISTING" ]; then
+    OWNER=$(owner_of "$PREEXISTING")
+    [ -n "$OWNER" ] && OWNER=" (from $OWNER)"
+    WINNER=$(find_on_path "$BIN" || true)
+
+    say ""
+    if [ "$WINNER" = "$TARGET" ]; then
+        warn "there was already a ${B}$BIN${R} at $PREEXISTING$OWNER"
+        say ""
+        say "Yours comes first in PATH, so typing ${B}$BIN${R} now runs this one."
+        say "The other is still there, reachable as $PREEXISTING"
+    else
+        # The more awkward way round: installed, but typing the name runs
+        # something else, which would otherwise look like a broken install.
+        warn "$PREEXISTING$OWNER comes before yours in PATH"
+        say ""
+        say "Typing ${B}$BIN${R} will run that, not the one just installed."
+        say "Put $DEST earlier in your PATH, or run it as $TARGET"
+    fi
 fi
 
 if [ "$RUST_WAS_INSTALLED" -eq 1 ]; then

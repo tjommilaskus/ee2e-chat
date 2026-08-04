@@ -28,6 +28,10 @@ curl -fsSL https://raw.githubusercontent.com/tjommilaskus/ee2e-chat/main/install
 
 Or from a clone, `./install.sh`. The installed command is **`chat`**.
 
+That name is not unique — the `ppp` package ships a `/usr/bin/chat` used by
+dialup scripts. The installer checks and tells you which one your shell will
+reach, so nothing goes quiet either way.
+
 Either way it builds from source and installs to `~/.local/bin`, so it never
 needs root. `--prefix DIR` puts it elsewhere, `--uninstall` removes it again.
 
