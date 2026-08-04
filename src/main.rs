@@ -56,9 +56,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    println!("type a message and press enter · ctrl-d to quit");
+
+    let typing = node.clone();
+    tokio::spawn(async move {
+        use tokio::io::AsyncBufReadExt;
+        let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            typing.say(&line);
+        }
+    });
+
     while let Some(event) = events_rx.recv().await {
         match event {
             Event::Listening(_) => {}
+            Event::Message {
+                from,
+                fingerprint,
+                content,
+            } => {
+                // The fingerprint is shown so two peers sharing a display name
+                // stay distinguishable.
+                println!("<{from} {}> {content}", &fingerprint[..9]);
+            }
             Event::PeerJoined { name, fingerprint } => {
                 println!("* {name} joined · {fingerprint}")
             }

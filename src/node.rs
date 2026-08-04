@@ -11,6 +11,7 @@
 //! the connection map drops the sender that the losing task is waiting on.
 
 use crate::crypto::{self, Keypair, KEY_LEN};
+use crate::messages::Message;
 use crate::peers::{Admission, Peer, PeerRegistry, Rejection};
 use crate::protocol::{Frame, ProtocolError, MAX_FRAME_BYTES};
 use futures::{SinkExt, StreamExt};
@@ -52,6 +53,14 @@ pub enum Event {
         name: String,
         existing: String,
         incoming: String,
+    },
+    /// A message, already decrypted and attributed. Also emitted for our own
+    /// messages, so a UI that clears its input line can still show what was
+    /// sent.
+    Message {
+        from: String,
+        fingerprint: String,
+        content: String,
     },
     Notice(String),
     Warning(String),
@@ -225,6 +234,82 @@ impl Node {
             .collect()
     }
 
+    /// Encrypt `text` separately for every connected peer and queue it.
+    ///
+    /// Deliberately not `async`. Cursive's event handlers are synchronous, so
+    /// an async send would need a runtime handle at every call site; and
+    /// awaiting a full queue would let one unresponsive peer stall messages to
+    /// everyone else. Queuing is best-effort instead, and a peer whose queue is
+    /// full is reported rather than waited on.
+    pub fn say(&self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+
+        let message = Message::new(self.inner.name.clone(), text.to_string());
+        let plaintext = match message.to_json() {
+            Ok(json) => json,
+            Err(e) => {
+                self.emit(Event::Warning(format!("could not serialise message: {e}")));
+                return;
+            }
+        };
+
+        // Snapshot under the lock and encrypt outside it. Sealing is real CPU
+        // work, once per recipient, and no connection should be blocked while
+        // it happens.
+        let targets: Vec<(Peer, mpsc::Sender<Frame>)> = {
+            let state = self.inner.state.lock().unwrap();
+            state
+                .registry
+                .all()
+                .filter_map(|peer| {
+                    state
+                        .connections
+                        .get(&peer.public_key)
+                        .map(|tx| (peer.clone(), tx.clone()))
+                })
+                .collect()
+        };
+
+        if targets.is_empty() {
+            self.emit(Event::Warning("nobody is connected; message not sent".to_string()));
+            return;
+        }
+
+        // One ciphertext per recipient: each pair has its own shared secret, so
+        // there is nothing to reuse between them.
+        for (peer, tx) in targets {
+            let sealed = crypto::seal(
+                plaintext.as_bytes(),
+                &peer.public_key,
+                &self.inner.identity.secret_key,
+            );
+
+            match sealed {
+                Ok((ciphertext, nonce)) => {
+                    if tx.try_send(Frame::Chat { ciphertext, nonce }).is_err() {
+                        self.emit(Event::Warning(format!(
+                            "{} is not keeping up; message to them was dropped",
+                            peer.name
+                        )));
+                    }
+                }
+                Err(e) => self.emit(Event::Warning(format!(
+                    "could not encrypt for {}: {e}",
+                    peer.name
+                ))),
+            }
+        }
+
+        self.emit(Event::Message {
+            from: self.inner.name.clone(),
+            fingerprint: self.fingerprint(),
+            content: text.to_string(),
+        });
+    }
+
     fn emit(&self, event: Event) {
         // Unbounded, so emitting never awaits and can be done from anywhere. A
         // send only fails once the consumer is gone, which means shutdown.
@@ -338,14 +423,76 @@ impl Node {
                 )));
                 Ok(())
             }
-            Frame::Chat { .. } => {
-                self.emit(Event::Notice(format!(
-                    "ignoring message from {} (not implemented yet)",
-                    peer.name
-                )));
+            Frame::Chat { ciphertext, nonce } => {
+                self.receive_chat(peer, &ciphertext, &nonce);
                 Ok(())
             }
         }
+    }
+
+    /// Decrypt and attribute an incoming message.
+    ///
+    /// A message that will not open is reported and skipped rather than being
+    /// treated as fatal: dropping the connection on bad input would hand any
+    /// peer an easy way to disconnect us.
+    fn receive_chat(&self, peer: &Peer, ciphertext: &[u8], nonce: &[u8; crypto::NONCE_LEN]) {
+        // Opening against the peer's public key is what proves authorship. Only
+        // the holder of that key could have produced something that opens here.
+        let plaintext = match crypto::open(
+            ciphertext,
+            nonce,
+            &self.inner.identity.secret_key,
+            &peer.public_key,
+        ) {
+            Ok(plaintext) => plaintext,
+            Err(e) => {
+                self.emit(Event::Warning(format!(
+                    "could not decrypt a message from {}: {e}",
+                    peer.name
+                )));
+                return;
+            }
+        };
+
+        let json = match std::str::from_utf8(&plaintext) {
+            Ok(json) => json,
+            Err(_) => {
+                self.emit(Event::Warning(format!(
+                    "{} sent a message that is not valid UTF-8",
+                    peer.name
+                )));
+                return;
+            }
+        };
+
+        let message = match Message::from_json(json) {
+            Ok(message) => message,
+            Err(e) => {
+                self.emit(Event::Warning(format!(
+                    "{} sent a malformed message: {e}",
+                    peer.name
+                )));
+                return;
+            }
+        };
+
+        // The name inside the ciphertext is authenticated, so no third party
+        // can have altered it -- but the peer itself can still write someone
+        // else's name there. Identity belongs to the handshake, so a
+        // disagreement means this peer is trying to appear as somebody else.
+        if message.from != peer.name {
+            self.emit(Event::Warning(format!(
+                "{} ({}) sent a message signed '{}'; discarded",
+                peer.name, peer.fingerprint, message.from
+            )));
+            return;
+        }
+
+        self.emit(Event::Message {
+            from: peer.name.clone(),
+            fingerprint: peer.fingerprint.clone(),
+            content: message.content,
+        });
     }
 
     /// Retire this connection, but only if it is still the registered one.

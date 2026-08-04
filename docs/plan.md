@@ -48,7 +48,7 @@ Carried forward as debt into Stage 2:
 
 ---
 
-## Stage 2 — Wire protocol
+## Stage 2 — Wire protocol ✅ COMPLETE
 
 **Files:** create `src/protocol.rs`, modify `src/crypto.rs`, `src/lib.rs`,
 delete `NetworkMessage` from `src/messages.rs`
@@ -113,7 +113,7 @@ readable while debugging.
 
 ---
 
-## Stage 3 — Peer registry
+## Stage 3 — Peer registry ✅ COMPLETE
 
 **Files:** create `src/peers.rs`
 
@@ -176,7 +176,7 @@ both sides dropped, or both kept.
 
 ---
 
-## Stage 4 — Transport: listen, dial, handshake
+## Stage 4 — Transport: listen, dial, handshake ✅ COMPLETE
 
 **Files:** create `src/node.rs`, add `tokio-util` (`codec` feature) and `clap`
 (`derive` feature), rewrite `src/main.rs`
@@ -202,7 +202,7 @@ the node running.
 
 ---
 
-## Stage 5 — Encrypted chat, headless
+## Stage 5 — Encrypted chat, headless ✅ COMPLETE
 
 Typed lines are sealed once per peer and written to each connection; inbound
 `Chat` frames are opened using the connection's established identity. Output is
