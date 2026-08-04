@@ -1,3 +1,4 @@
+use ee2e_chat::room::RoomCode;
 use ee2e_chat::node::{Event, Node, NodeConfig};
 use ee2e_chat::protocol::{Frame, MAX_FRAME_BYTES};
 use futures::{SinkExt, StreamExt};
@@ -6,6 +7,14 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::codec::{Framed, LinesCodec};
+
+/// Every node in a test shares one room, since a node only talks to peers
+/// holding the same code. Rejection of a *different* code is covered by its own
+/// tests rather than being a side effect of every other one.
+fn test_room() -> RoomCode {
+    RoomCode::parse("TIO-1111-1111-1111-1111").expect("a valid code")
+}
+
 
 /// Port zero so the OS picks a free one; tests then use the address it actually
 /// bound. Hard-coding ports makes tests collide with each other and with
@@ -16,6 +25,7 @@ async fn start(name: &str) -> (Node, SocketAddr, UnboundedReceiver<Event>) {
         NodeConfig {
             name: name.to_string(),
             listen: "127.0.0.1:0".parse().unwrap(),
+            room: test_room(),
             identity: None,
         },
         tx,
@@ -146,12 +156,26 @@ async fn test_raw_client_disconnecting_removes_the_peer() {
     let (alice, alice_addr, _ra) = start("alice").await;
     let mut client = raw_client(alice_addr).await;
 
+    let identity = ee2e_chat::crypto::generate_keypair();
+    let my_nonce = ee2e_chat::room::new_nonce();
     let hello = Frame::Hello {
         name: "mallory".to_string(),
-        public_key: vec![9u8; 32],
+        public_key: identity.public_key.clone(),
         listen_port: 4242,
+        nonce: my_nonce,
     };
     send_raw(&mut client, &hello.encode().unwrap()).await;
+
+    // Admission now also needs the room code proved, as for any real peer.
+    let line = client.next().await.expect("hello").expect("valid line");
+    let (their_key, their_nonce) = match Frame::decode(&line).unwrap() {
+        Frame::Hello {
+            public_key, nonce, ..
+        } => (public_key, nonce),
+        other => panic!("expected Hello, got {other:?}"),
+    };
+    let proof = test_room().proof(&identity.public_key, &my_nonce, &their_key, &their_nonce);
+    send_raw(&mut client, &Frame::Auth { proof }.encode().unwrap()).await;
 
     assert!(wait_until(|| alice.peers().len() == 1).await, "should admit");
 
@@ -203,6 +227,7 @@ async fn test_rejects_a_public_key_of_the_wrong_length() {
         name: "mallory".to_string(),
         public_key: vec![1u8; 31],
         listen_port: 4242,
+        nonce: [0u8; 32],
     };
     assert_handshake_rejected("short key", hello.encode().unwrap()).await;
 }
@@ -213,6 +238,7 @@ async fn test_rejects_an_empty_name() {
         name: "   ".to_string(),
         public_key: vec![1u8; 32],
         listen_port: 4242,
+        nonce: [0u8; 32],
     };
     assert_handshake_rejected("blank name", hello.encode().unwrap()).await;
 }
@@ -223,6 +249,7 @@ async fn test_rejects_an_absurdly_long_name() {
         name: "n".repeat(500),
         public_key: vec![1u8; 32],
         listen_port: 4242,
+        nonce: [0u8; 32],
     };
     assert_handshake_rejected("long name", hello.encode().unwrap()).await;
 }
@@ -233,6 +260,7 @@ async fn test_rejects_a_zero_listen_port() {
         name: "mallory".to_string(),
         public_key: vec![1u8; 32],
         listen_port: 0,
+        nonce: [0u8; 32],
     };
     assert_handshake_rejected("port zero", hello.encode().unwrap()).await;
 }
@@ -346,4 +374,137 @@ async fn test_reports_a_join_event() {
     assert_eq!(joined.0, "bob");
     assert_eq!(joined.1, bob.fingerprint());
     assert_eq!(alice.peers().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Room admission
+//
+// Encryption governs what a peer can read; the room code governs whether they
+// get in at all. Without it, anyone able to reach the port becomes a peer.
+// ---------------------------------------------------------------------------
+
+async fn start_in(name: &str, room: RoomCode) -> (Node, SocketAddr, UnboundedReceiver<Event>) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (node, addr) = Node::start(
+        NodeConfig {
+            name: name.to_string(),
+            listen: "127.0.0.1:0".parse().unwrap(),
+            room,
+            identity: None,
+        },
+        tx,
+    )
+    .await
+    .expect("node should start");
+    (node, addr, rx)
+}
+
+#[tokio::test]
+async fn test_a_peer_with_a_different_code_is_kept_out() {
+    let (alice, alice_addr, _ra) = start_in("alice", test_room()).await;
+    let (mallory, _, _rm) = start_in("mallory", RoomCode::generate()).await;
+
+    mallory.connect(alice_addr).await.expect("dial");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    assert!(
+        alice.peers().is_empty(),
+        "an outsider must not be admitted, got {:?}",
+        alice.peers()
+    );
+    assert!(mallory.peers().is_empty(), "and must not think it got in");
+}
+
+#[tokio::test]
+async fn test_the_same_code_still_gets_in() {
+    let (alice, alice_addr, _ra) = start_in("alice", test_room()).await;
+    let (bob, _, _rb) = start_in("bob", test_room()).await;
+
+    bob.connect(alice_addr).await.expect("dial");
+    assert!(
+        wait_until(|| alice.peers().len() == 1 && bob.peers().len() == 1).await,
+        "the same code should be admitted"
+    );
+}
+
+/// Refusing an outsider must not disturb the room they failed to enter.
+#[tokio::test]
+async fn test_a_refused_outsider_leaves_the_room_working() {
+    let (alice, alice_addr, _ra) = start_in("alice", test_room()).await;
+    let (bob, _, _rb) = start_in("bob", test_room()).await;
+    bob.connect(alice_addr).await.expect("dial");
+    assert!(wait_until(|| alice.peers().len() == 1).await);
+
+    for _ in 0..3 {
+        let (mallory, _, _rm) = start_in("mallory", RoomCode::generate()).await;
+        mallory.connect(alice_addr).await.expect("dial");
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    assert_eq!(alice.peers().len(), 1, "only bob should remain");
+    assert_eq!(alice.peers()[0].name, "bob");
+}
+
+/// A client that says hello and then never proves anything must not hold a
+/// connection open indefinitely.
+#[tokio::test]
+async fn test_a_client_that_never_proves_the_code_is_dropped() {
+    let (alice, alice_addr, _ra) = start_in("alice", test_room()).await;
+    let mut client = raw_client(alice_addr).await;
+
+    let hello = Frame::Hello {
+        name: "mallory".to_string(),
+        public_key: vec![7u8; 32],
+        listen_port: 4242,
+        nonce: [0u8; 32],
+    };
+    send_raw(&mut client, &hello.encode().unwrap()).await;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        alice.peers().is_empty(),
+        "no admission without a proof, got {:?}",
+        alice.peers()
+    );
+}
+
+/// The code must never appear on the wire, or watching one handshake would be
+/// enough to join.
+#[tokio::test]
+async fn test_the_room_code_is_never_transmitted() {
+    let room = test_room();
+    let (_alice, alice_addr, _ra) = start_in("alice", room.clone()).await;
+
+    let stream = TcpStream::connect(alice_addr).await.expect("connect");
+    let mut wire = Framed::new(stream, LinesCodec::new_with_max_length(MAX_FRAME_BYTES));
+
+    let identity = ee2e_chat::crypto::generate_keypair();
+    let my_nonce = ee2e_chat::room::new_nonce();
+    wire.send(
+        Frame::Hello {
+            name: "observer".to_string(),
+            public_key: identity.public_key.clone(),
+            listen_port: 4242,
+            nonce: my_nonce,
+        }
+        .encode()
+        .unwrap(),
+    )
+    .await
+    .expect("send");
+
+    let shown = room.display();
+    let bare = shown.replace('-', "");
+
+    // Everything the node says during the handshake.
+    for _ in 0..2 {
+        let line = wire.next().await.expect("a frame").expect("valid line");
+        assert!(!line.contains(&shown), "the code appeared on the wire: {line}");
+        assert!(!line.contains(&bare), "the code appeared on the wire: {line}");
+
+        if let Frame::Hello { .. } = Frame::decode(&line).unwrap() {
+            let proof = room.proof(&identity.public_key, &my_nonce, &[0u8; 32], &[0u8; 32]);
+            let _ = wire.send(Frame::Auth { proof }.encode().unwrap()).await;
+        }
+    }
 }

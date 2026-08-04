@@ -12,6 +12,7 @@
 
 use crate::crypto::Keypair;
 use crate::node::{Event, Node, NodeConfig};
+use crate::room::RoomCode;
 use chrono::Local;
 use cursive::align::HAlign;
 use cursive::theme::{BorderStyle, Color, ColorStyle, PaletteColor, Theme};
@@ -30,6 +31,7 @@ const HEADER: &str = "header";
 const F_NAME: &str = "f_name";
 const F_LISTEN: &str = "f_listen";
 const F_CONNECT: &str = "f_connect";
+const F_ROOM: &str = "f_room";
 const F_ERROR: &str = "f_error";
 
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:9999";
@@ -148,6 +150,9 @@ pub struct Startup {
     pub name: String,
     pub listen: String,
     pub connect: Option<String>,
+    /// Shown so it can be read off and shared, and edited to join someone
+    /// else's room.
+    pub room: String,
 }
 
 impl Default for Startup {
@@ -156,6 +161,7 @@ impl Default for Startup {
             name: String::new(),
             listen: DEFAULT_LISTEN.to_string(),
             connect: None,
+            room: String::new(),
         }
     }
 }
@@ -170,6 +176,10 @@ impl Default for Startup {
 pub struct Launcher {
     handle: tokio::runtime::Handle,
     identity: Option<Keypair>,
+    room: RoomCode,
+    /// Where to remember a room joined from the setup screen, so a code only
+    /// has to be typed the once.
+    room_store: Option<std::path::PathBuf>,
     events: UnboundedSender<Event>,
 }
 
@@ -177,13 +187,22 @@ impl Launcher {
     pub fn new(
         handle: tokio::runtime::Handle,
         identity: Option<Keypair>,
+        room: RoomCode,
+        room_store: Option<std::path::PathBuf>,
         events: UnboundedSender<Event>,
     ) -> Self {
         Launcher {
             handle,
             identity,
+            room,
+            room_store,
             events,
         }
+    }
+
+    /// The room this launcher starts in, for prefilling the setup screen.
+    pub fn room_display(&self) -> String {
+        self.room.display()
     }
 
     /// Bind, and dial the bootstrap peer if one was given.
@@ -209,6 +228,18 @@ impl Launcher {
             .filter(|target| !target.is_empty())
             .map(str::to_string);
 
+        // A blank field means "keep the room I am already in"; anything else is
+        // a code someone has been given, which becomes the room from now on.
+        let room = match startup.room.trim() {
+            "" => self.room.clone(),
+            typed => crate::room::RoomCode::parse(typed).map_err(|e| e.to_string())?,
+        };
+
+        if let Some(path) = self.room_store.as_ref().filter(|_| room != self.room) {
+            crate::room::save(path, &room)
+                .map_err(|e| format!("could not remember the room: {e}"))?;
+        }
+
         let identity = self.identity.clone();
         let events = self.events.clone();
 
@@ -217,6 +248,7 @@ impl Launcher {
                 NodeConfig {
                     name,
                     listen,
+                    room,
                     identity,
                 },
                 events.clone(),
@@ -378,6 +410,9 @@ fn setup_screen(siv: &mut Cursive, launcher: Launcher, defaults: Startup) {
         .child(TextView::new("Connect to a peer  (blank to wait for others)"))
         .child(field(F_CONNECT, defaults.connect.as_deref().unwrap_or("")))
         .child(DummyView)
+        .child(TextView::new("Room code  (yours, or one a friend sent you)"))
+        .child(field(F_ROOM, &defaults.room))
+        .child(DummyView)
         .child(TextView::new(StyledString::styled("", RED)).with_name(F_ERROR));
 
     siv.add_layer(
@@ -400,6 +435,7 @@ fn connect_pressed(siv: &mut Cursive, launcher: &Launcher) {
         name: field_value(siv, F_NAME),
         listen: field_value(siv, F_LISTEN),
         connect: Some(field_value(siv, F_CONNECT)),
+        room: field_value(siv, F_ROOM),
     };
 
     match launcher.start(&startup) {

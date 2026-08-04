@@ -1,4 +1,5 @@
 use ee2e_chat::crypto;
+use ee2e_chat::room::RoomCode;
 use ee2e_chat::node::{Event, Node, NodeConfig};
 use ee2e_chat::protocol::{Frame, PeerInfo, MAX_FRAME_BYTES};
 use futures::{SinkExt, StreamExt};
@@ -8,12 +9,21 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::codec::{Framed, LinesCodec};
 
+/// Every node in a test shares one room, since a node only talks to peers
+/// holding the same code. Rejection of a *different* code is covered by its own
+/// tests rather than being a side effect of every other one.
+fn test_room() -> RoomCode {
+    RoomCode::parse("TIO-1111-1111-1111-1111").expect("a valid code")
+}
+
+
 async fn start(name: &str) -> (Node, SocketAddr, UnboundedReceiver<Event>) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let (node, addr) = Node::start(
         NodeConfig {
             name: name.to_string(),
             listen: "127.0.0.1:0".parse().unwrap(),
+            room: test_room(),
             identity: None,
         },
         tx,
@@ -159,13 +169,29 @@ async fn handshake_as(name: &str, addr: SocketAddr) -> Framed<TcpStream, LinesCo
     let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(MAX_FRAME_BYTES));
 
     let identity = crypto::generate_keypair();
+    let my_nonce = ee2e_chat::room::new_nonce();
     let hello = Frame::Hello {
         name: name.to_string(),
-        public_key: identity.public_key,
+        public_key: identity.public_key.clone(),
         listen_port: 4242,
+        nonce: my_nonce,
     };
     framed.send(hello.encode().unwrap()).await.expect("send");
-    framed.next().await.expect("hello").expect("valid line");
+
+    let line = framed.next().await.expect("hello").expect("valid line");
+    let (their_key, their_nonce) = match Frame::decode(&line).unwrap() {
+        Frame::Hello {
+            public_key, nonce, ..
+        } => (public_key, nonce),
+        other => panic!("expected Hello, got {other:?}"),
+    };
+
+    let proof = test_room().proof(&identity.public_key, &my_nonce, &their_key, &their_nonce);
+    framed
+        .send(Frame::Auth { proof }.encode().unwrap())
+        .await
+        .expect("send");
+    framed.next().await.expect("auth").expect("valid line");
     framed
 }
 

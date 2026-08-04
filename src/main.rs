@@ -6,6 +6,7 @@ use clap::Parser;
 use ee2e_chat::identity;
 use ee2e_chat::node::{Event, Node};
 use ee2e_chat::ui;
+use ee2e_chat::room::{self, RoomCode};
 use ee2e_chat::ui::{Launcher, Startup};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -39,6 +40,16 @@ struct Args {
     /// differ from every previous session, so nobody can recognise you.
     #[arg(long, conflicts_with = "identity")]
     ephemeral: bool,
+
+    /// The room to join, as given to you by whoever runs it. Remembered, so it
+    /// only needs passing once.
+    #[arg(long, value_name = "CODE")]
+    room: Option<String>,
+
+    /// Start a brand new room and print its code. Everyone already in the old
+    /// one stays there; this does not move them.
+    #[arg(long, conflicts_with = "room")]
+    new_room: bool,
 
     /// Plain line-by-line output instead of the full interface. Useful when a
     /// full-screen UI would get in the way, such as piping a session to a file.
@@ -74,7 +85,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let _ = startup.send(note);
     }
 
-    let launcher = Launcher::new(runtime.handle().clone(), keypair, events_tx);
+    let (room_code, room_notes) = resolve_room(args.room, args.new_room)?;
+    for note in room_notes {
+        let _ = startup.send(note);
+    }
+
+    let room_path = room::default_path().ok();
+    let launcher = Launcher::new(
+        runtime.handle().clone(),
+        keypair,
+        room_code,
+        room_path,
+        events_tx,
+    );
 
     // An empty name is what asks for the setup screen. Anything else given on
     // the command line prefills it.
@@ -82,6 +105,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         name: args.name.unwrap_or_default(),
         listen: args.listen,
         connect: args.connect,
+        // Prefilled so it can be read off and shared, or replaced with a code
+        // a friend has sent.
+        room: launcher.room_display(),
     };
 
     if args.plain {
@@ -135,6 +161,54 @@ fn resolve_identity(
     }));
 
     Ok((Some(loaded.keypair), notes))
+}
+
+/// Decide which room to run in.
+///
+/// A room is always created when none exists, rather than running without one.
+/// An open room that anybody who finds the port can join is not a state anyone
+/// would choose deliberately, so it is not one that can be reached by
+/// forgetting a flag.
+fn resolve_room(
+    given: Option<String>,
+    new_room: bool,
+) -> Result<(RoomCode, Vec<Event>), Box<dyn std::error::Error>> {
+    let path = room::default_path()?;
+
+    if let Some(text) = given {
+        let code = RoomCode::parse(&text)
+            .map_err(|e| format!("{e}\n\nA room code looks like TIO-K7M2-9QRX-4BNP-W8LZ."))?;
+        // Remembered, so it only has to be typed once.
+        room::save(&path, &code)?;
+        return Ok((
+            code.clone(),
+            vec![Event::Notice(format!("room {}", code.display()))],
+        ));
+    }
+
+    if new_room {
+        let code = RoomCode::generate();
+        room::save(&path, &code)?;
+        return Ok((
+            code.clone(),
+            vec![
+                Event::Notice(format!("new room {}", code.display())),
+                Event::Notice("share that code with the people you want in it".to_string()),
+            ],
+        ));
+    }
+
+    let loaded = room::load_or_create(&path)?;
+    let mut notes: Vec<Event> = loaded.notes.into_iter().map(Event::Warning).collect();
+
+    notes.push(Event::Notice(format!("room {}", loaded.code.display())));
+    if loaded.created {
+        notes.push(Event::Notice(
+            "share that code with the people you want in it".to_string(),
+        ));
+    }
+
+    Ok((loaded.code, notes))
 }
 
 /// Line-by-line mode: the same event stream, printed instead of drawn.

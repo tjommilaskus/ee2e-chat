@@ -70,6 +70,39 @@ without `--name`, say — prefills the setup screen rather than being ignored.
 easier to pipe somewhere. It has no setup screen to ask on, so it needs
 `--name`.
 
+## Rooms
+
+A room has a code. Everyone in it holds the same one, and a connection is
+refused unless both ends can prove they do — so reaching the port is not enough
+to get in.
+
+One is created the first time you run the program:
+
+```
+  room TIO-TEPJ-QYH0-DBKA-JPXR
+  share that code with the people you want in it
+```
+
+Send it to your friends however you like. They pass it once:
+
+```
+ee2e-chat --room TIO-TEPJ-QYH0-DBKA-JPXR --connect 192.168.1.42:9001
+```
+
+and it is remembered from then on. It can also be typed into the setup screen,
+which is where it appears for reading out.
+
+`--new-room` starts a fresh one. Anyone still holding the old code stays where
+they are; this does not move them.
+
+**The code is never transmitted.** Each side sends an HMAC over both public keys
+and a fresh nonce from each, so watching a handshake reveals nothing about the
+code, and a recorded exchange cannot be replayed into a later connection.
+
+Losing control of the code means losing control of the room: anyone holding it
+can join. There is no way to revoke it for one person — start a new room and
+give the new code to everyone except them.
+
 ## Your identity
 
 Your keypair is stored at `$XDG_CONFIG_HOME/ee2e-chat/identity` (usually
@@ -109,6 +142,18 @@ Display names carry no authority whatsoever — anyone can choose any name. If
 two identities appear under one name, or someone takes yours, the interface
 says so and shows both fingerprints. **The fingerprint is the identity.**
 
+## Talking to someone not on your network
+
+Peers have to be able to reach each other, and two home connections generally
+cannot. The straightforward answer is a VPN such as
+[Tailscale](https://tailscale.com): install it on both machines, run
+`tailscale ip -4` to find your address, and have the other person connect to
+that. Nothing else changes.
+
+Forwarding a port on your router also works, if your connection has a real
+public address rather than a carrier-grade NAT one. The room code is what makes
+that safe to do — without it, an open port would be an open room.
+
 ## How it works
 
 Every node is symmetric: it listens, it dials, and it holds one long-lived
@@ -123,11 +168,13 @@ Gossip is used only to discover peers, never to route messages.
 | `messages.rs` | the plaintext message type |
 | `protocol.rs` | wire frames and newline framing |
 | `peers.rs` | peer registry, name clashes, dial collisions |
+| `room.rs` | room codes, admission proofs |
 | `identity.rs` | reading and writing the stored keypair |
+| `secretfile.rs` | owner-only files for the key and the room code |
 | `node.rs` | listening, dialling, handshakes, gossip |
 | `ui.rs` | the interface |
 
-The first four touch neither disk nor network, which is what makes the awkward
+The first five touch neither disk nor network, which is what makes the awkward
 parts — collision resolution in particular — testable without opening a socket.
 
 ### Cryptography
@@ -153,6 +200,9 @@ Stated plainly rather than left to be discovered.
   NATs cannot open a TCP connection, and fixing that needs STUN/TURN
   infrastructure — servers, which is the thing this design removes. Works on a
   LAN, over a VPN such as Tailscale, or with one peer port-forwarded.
+- **A room code cannot be revoked.** It is one secret shared by everyone in the
+  room, so removing one person means starting a new room and redistributing the
+  code to everyone else.
 - **No record of who you have met.** Identities persist, but nothing remembers
   which fingerprint belonged to which name last time, so a familiar name
   appearing with a new key passes unremarked. Verification has to be repeated
@@ -170,7 +220,7 @@ and the limitations above are the ones that are *known*.
 ## Development
 
 ```
-cargo test      # 111 tests
+cargo test      # 132 tests
 cargo clippy --all-targets
 ```
 

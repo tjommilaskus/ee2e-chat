@@ -6,8 +6,17 @@
 
 use cursive::views::TextView;
 use cursive::Cursive;
+use ee2e_chat::room::RoomCode;
 use ee2e_chat::node::{Event, Node, NodeConfig};
 use ee2e_chat::ui;
+
+/// Every node in a test shares one room, since a node only talks to peers
+/// holding the same code. Rejection of a *different* code is covered by its own
+/// tests rather than being a side effect of every other one.
+fn test_room() -> RoomCode {
+    RoomCode::parse("TIO-1111-1111-1111-1111").expect("a valid code")
+}
+
 
 async fn node(name: &str) -> Node {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -18,6 +27,7 @@ async fn node(name: &str) -> Node {
         NodeConfig {
             name: name.to_string(),
             listen: "127.0.0.1:0".parse().unwrap(),
+            room: test_room(),
             identity: None,
         },
         tx,

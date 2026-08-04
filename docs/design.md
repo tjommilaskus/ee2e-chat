@@ -73,6 +73,31 @@ frame's sender is already known — it cannot be claimed. The plaintext
 ciphertext, which means it is authenticated by the AEAD and cross-checked
 against the connection's identity on arrival.
 
+## Admission
+
+Encryption settles what a peer can read. It says nothing about who may join, so
+without something further, anyone able to reach the listening port becomes a
+peer — tolerable only on a network where that is already impossible, which
+rules out the port forwarding people will reasonably want to do.
+
+A room therefore has a code, held by everyone in it. During the handshake each
+side sends an HMAC over both public keys and a fresh nonce from each, keyed by
+the code. The code itself never crosses the wire, and the proof is worthless on
+any other connection: replaying it into a later one fails on the nonces, and
+echoing it back at its sender fails because the two sides order the inputs
+differently.
+
+The code is generated at full entropy rather than chosen, so a plain hash
+suffices to derive the key -- there is no dictionary to run against it.
+
+One is created when none exists rather than running without. An open room is
+not a state anyone would choose deliberately, so it is not one that can be
+reached by forgetting a flag.
+
+This answers "are you invited". Fingerprints answer "are you who you claim".
+Both questions still need asking, and a leaked code makes the second one matter
+more rather than less.
+
 ## Trust model
 
 Keys are accepted on first use (TOFU) and each is rendered as a short

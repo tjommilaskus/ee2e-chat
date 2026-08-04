@@ -14,6 +14,7 @@ use crate::crypto::{self, Keypair, KEY_LEN};
 use crate::messages::Message;
 use crate::peers::{Admission, NameClash, Peer, PeerRegistry, Rejection};
 use crate::protocol::{Frame, PeerInfo, ProtocolError, MAX_FRAME_BYTES};
+use crate::room::{self, RoomCode};
 use futures::{SinkExt, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -87,6 +88,9 @@ pub enum ConnError {
     HandshakeTimeout,
     ClosedDuringHandshake,
     ExpectedHello,
+    ExpectedAuth,
+    /// The peer could not prove it holds this room's code.
+    WrongRoom,
     InvalidIdentity(&'static str),
     Rejected(Rejection),
 }
@@ -100,6 +104,8 @@ impl fmt::Display for ConnError {
             ConnError::HandshakeTimeout => write!(f, "peer did not complete the handshake in time"),
             ConnError::ClosedDuringHandshake => write!(f, "peer closed during the handshake"),
             ConnError::ExpectedHello => write!(f, "peer's first frame was not a Hello"),
+            ConnError::ExpectedAuth => write!(f, "peer did not send an admission proof"),
+            ConnError::WrongRoom => write!(f, "peer has a different room code"),
             ConnError::InvalidIdentity(why) => write!(f, "peer presented an invalid identity: {why}"),
             ConnError::Rejected(Rejection::SelfConnection) => write!(f, "connected to ourselves"),
             ConnError::Rejected(Rejection::DuplicateConnection) => {
@@ -135,6 +141,8 @@ impl From<tokio_util::codec::LinesCodecError> for ConnError {
 pub struct NodeConfig {
     pub name: String,
     pub listen: SocketAddr,
+    /// The code every peer in this room must hold.
+    pub room: RoomCode,
     /// The long-term keypair, normally loaded from disk. `None` generates a
     /// throwaway one, which is right for tests and for a deliberately
     /// unrecognisable session, but means the fingerprint changes every run.
@@ -158,6 +166,7 @@ struct State {
 struct Inner {
     name: String,
     identity: Keypair,
+    room: RoomCode,
     listen_port: u16,
     state: Mutex<State>,
     events: mpsc::UnboundedSender<Event>,
@@ -206,6 +215,7 @@ impl Node {
             inner: Arc::new(Inner {
                 name: config.name,
                 identity,
+                room: config.room,
                 listen_port: bound.port(),
                 state: Mutex::new(State {
                     registry,
@@ -466,8 +476,10 @@ impl Node {
 
     fn handle_frame(&self, peer: &Peer, line: &str) -> Result<(), ConnError> {
         match Frame::decode(line)? {
-            // A second Hello is a protocol violation: identity is settled once.
+            // Both belong to the handshake and are settled once. Repeating
+            // either after it is a protocol violation.
             Frame::Hello { .. } => Err(ConnError::ExpectedHello),
+            Frame::Auth { .. } => Err(ConnError::ExpectedAuth),
             Frame::Peers { peers } => {
                 self.handle_gossip(peer, peers);
                 Ok(())
@@ -657,10 +669,12 @@ impl Node {
         framed: &mut Framed<TcpStream, LinesCodec>,
         peer_ip: IpAddr,
     ) -> Result<Peer, ConnError> {
+        let my_nonce = room::new_nonce();
         let hello = Frame::Hello {
             name: self.inner.name.clone(),
             public_key: self.inner.identity.public_key.clone(),
             listen_port: self.inner.listen_port,
+            nonce: my_nonce,
         };
         framed.send(hello.encode()?).await?;
 
@@ -673,6 +687,7 @@ impl Node {
             name,
             public_key,
             listen_port,
+            nonce: their_nonce,
         } = Frame::decode(&line)?
         else {
             return Err(ConnError::ExpectedHello);
@@ -691,6 +706,37 @@ impl Node {
         }
         if listen_port == 0 {
             return Err(ConnError::InvalidIdentity("listen port is zero"));
+        }
+
+        // Both sides send their proof before checking the other's. Waiting for
+        // the peer to go first would deadlock, since they are waiting too, and
+        // a proof handed to an outsider is worthless: it is bound to their
+        // public key, and reading anything still needs the matching secret key.
+        let my_proof = self.inner.room.proof(
+            &self.inner.identity.public_key,
+            &my_nonce,
+            &public_key,
+            &their_nonce,
+        );
+        framed.send(Frame::Auth { proof: my_proof }.encode()?).await?;
+
+        let line = framed
+            .next()
+            .await
+            .ok_or(ConnError::ClosedDuringHandshake)??;
+
+        let Frame::Auth { proof } = Frame::decode(&line)? else {
+            return Err(ConnError::ExpectedAuth);
+        };
+
+        if !self.inner.room.verify(
+            &proof,
+            &public_key,
+            &their_nonce,
+            &self.inner.identity.public_key,
+            &my_nonce,
+        ) {
+            return Err(ConnError::WrongRoom);
         }
 
         // The peer's own view of its address is unreliable behind NAT, so the

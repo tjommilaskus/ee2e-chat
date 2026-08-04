@@ -10,7 +10,8 @@
 //!
 //! This module performs no I/O. Applying the framing to a socket is `node.rs`.
 
-use crate::crypto::NONCE_LEN;
+use crate::crypto::NONCE_LEN as CHAT_NONCE_LEN;
+use crate::room::{NONCE_LEN, PROOF_LEN};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -73,7 +74,17 @@ pub enum Frame {
         name: String,
         public_key: Vec<u8>,
         listen_port: u16,
+        /// Fresh per connection, so the admission proof that follows cannot be
+        /// recorded and replayed into a later one.
+        nonce: [u8; NONCE_LEN],
     },
+
+    /// Proof of holding the room code, sent immediately after `Hello`.
+    ///
+    /// The code itself is never sent. This is an HMAC over both public keys and
+    /// both nonces, so it reveals nothing about the code and is worthless on
+    /// any other connection.
+    Auth { proof: [u8; PROOF_LEN] },
 
     /// Gossip. The recipient dials anyone here it is not already connected to.
     Peers { peers: Vec<PeerInfo> },
@@ -83,7 +94,7 @@ pub enum Frame {
     /// one would only reintroduce something forgeable.
     Chat {
         ciphertext: Vec<u8>,
-        nonce: [u8; NONCE_LEN],
+        nonce: [u8; CHAT_NONCE_LEN],
     },
 }
 

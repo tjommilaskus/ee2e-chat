@@ -5,6 +5,7 @@ fn hello() -> Frame {
         name: "alice".to_string(),
         public_key: vec![7u8; 32],
         listen_port: 9999,
+        nonce: [3u8; 32],
     }
 }
 
@@ -25,6 +26,10 @@ fn peers() -> Frame {
     }
 }
 
+fn auth() -> Frame {
+    Frame::Auth { proof: [5u8; 32] }
+}
+
 fn chat() -> Frame {
     Frame::Chat {
         ciphertext: vec![9, 8, 7, 6, 5],
@@ -34,7 +39,7 @@ fn chat() -> Frame {
 
 #[test]
 fn test_every_variant_round_trips() {
-    for frame in [hello(), peers(), chat()] {
+    for frame in [hello(), auth(), peers(), chat()] {
         let line = frame.encode().unwrap();
         let decoded = Frame::decode(&line).unwrap();
         assert_eq!(decoded, frame);
@@ -52,7 +57,7 @@ fn test_empty_peers_list_round_trips() {
 // newline whatsoever -- otherwise one frame would arrive as two.
 #[test]
 fn test_encoded_frame_contains_no_newline() {
-    for frame in [hello(), peers(), chat()] {
+    for frame in [hello(), auth(), peers(), chat()] {
         assert!(
             !frame.encode().unwrap().contains('\n'),
             "encoded frame must not contain a newline"
@@ -70,6 +75,7 @@ fn test_newline_in_a_field_cannot_split_the_frame() {
         name: "alice\n{\"type\":\"Chat\",\"ciphertext\":[],\"nonce\":[]}".to_string(),
         public_key: vec![7u8; 32],
         listen_port: 9999,
+        nonce: [3u8; 32],
     };
 
     let line = frame.encode().unwrap();
@@ -107,7 +113,7 @@ fn test_malformed_input_errors_without_panicking() {
         r#"{"type":"Hello"}"#,                       // missing fields
         r#"{"type":"Nonexistent","x":1}"#,           // unknown variant
         r#"{"type":"Chat","ciphertext":[1],"nonce":[1,2,3]}"#, // nonce wrong length
-        r#"{"type":"Hello","name":5,"public_key":[],"listen_port":1}"#, // wrong type
+        r#"{"type":"Hello","name":5,"public_key":[],"listen_port":1,"nonce":[]}"#, // wrong type
     ];
 
     for input in bad_inputs {
@@ -138,6 +144,7 @@ fn test_oversized_valid_json_is_still_rejected() {
         name: "a".repeat(MAX_FRAME_BYTES),
         public_key: vec![0u8; 32],
         listen_port: 1,
+        nonce: [3u8; 32],
     };
 
     assert!(matches!(

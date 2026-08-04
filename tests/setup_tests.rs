@@ -7,15 +7,24 @@
 
 use cursive::views::TextView;
 use cursive::Cursive;
+use ee2e_chat::room::RoomCode;
 use ee2e_chat::node::{Event, Node, NodeConfig};
 use ee2e_chat::ui::{self, Launcher, Startup};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
+/// Every node in a test shares one room, since a node only talks to peers
+/// holding the same code. Rejection of a *different* code is covered by its own
+/// tests rather than being a side effect of every other one.
+fn test_room() -> RoomCode {
+    RoomCode::parse("TIO-1111-1111-1111-1111").expect("a valid code")
+}
+
+
 fn launcher() -> (Runtime, Launcher, UnboundedReceiver<Event>) {
     let runtime = Runtime::new().expect("runtime");
     let (tx, rx) = mpsc::unbounded_channel();
-    let launcher = Launcher::new(runtime.handle().clone(), None, tx);
+    let launcher = Launcher::new(runtime.handle().clone(), None, test_room(), None, tx);
     (runtime, launcher, rx)
 }
 
@@ -24,6 +33,8 @@ fn startup(name: &str, listen: &str, connect: Option<&str>) -> Startup {
         name: name.to_string(),
         listen: listen.to_string(),
         connect: connect.map(str::to_string),
+        // Blank keeps the launcher's own room, which is what most tests want.
+        room: String::new(),
     }
 }
 
@@ -138,6 +149,7 @@ async fn node(name: &str) -> Node {
         NodeConfig {
             name: name.to_string(),
             listen: "127.0.0.1:0".parse().unwrap(),
+            room: test_room(),
             identity: None,
         },
         tx,
@@ -204,4 +216,53 @@ async fn test_events_after_the_chat_exists_are_not_buffered() {
 
     ui::apply(&mut siv, Event::Notice("live".to_string()));
     assert!(transcript(&mut siv).contains("live"));
+}
+
+// ---------------------------------------------------------------------------
+// Joining a room from the setup screen
+// ---------------------------------------------------------------------------
+
+/// A code typed into the form replaces the one the launcher started with, which
+/// is how somebody joins a friend's room without touching the command line.
+#[test]
+fn test_a_typed_room_code_is_used() {
+    let (_rt, launcher, _rx) = launcher();
+    let theirs = RoomCode::generate();
+
+    let node = launcher
+        .start(&Startup {
+            name: "alice".to_string(),
+            listen: "127.0.0.1:0".to_string(),
+            connect: None,
+            room: theirs.display(),
+        })
+        .expect("should start");
+
+    assert_eq!(node.name(), "alice");
+}
+
+#[test]
+fn test_an_unreadable_room_code_is_refused_with_an_example() {
+    let (_rt, launcher, _rx) = launcher();
+
+    let err = launcher
+        .start(&Startup {
+            name: "alice".to_string(),
+            listen: "127.0.0.1:0".to_string(),
+            connect: None,
+            room: "obviously not a code".to_string(),
+        })
+        .expect_err("should be refused");
+
+    assert!(err.contains("room code"), "got: {err}");
+}
+
+/// Leaving the field alone must not be treated as a blank code.
+#[test]
+fn test_a_blank_room_field_keeps_the_current_room() {
+    let (_rt, launcher, _rx) = launcher();
+
+    launcher
+        .start(&startup("alice", "127.0.0.1:0", None))
+        .expect("a blank room field should keep the existing room");
 }
