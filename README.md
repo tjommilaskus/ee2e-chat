@@ -4,20 +4,8 @@ End-to-end encrypted terminal chat with no server. Every participant runs the
 same program, nodes connect directly to one another, and the rest of the room
 is discovered by gossip.
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│           ⌐ TIO CHAT ¬  User: Sue  ⌐ 16:24:59 ¬              │
-└──────────────────────────────────────────────────────────────┘
-┌─────────────────────────┤ Messages ├─────────────────────────┐
-│[you are Sue · 29C5-2015-DE08-4502]                           │
-│[Bob joined the chat · 4DC2-D703-300C-4017]                   │
-│┌[16:24:56]                                                   │
-│└─ Bob ▶ hi Sue                                               │
-└──────────────────────────────────────────────────────────────┘
-┌─────────────────────────┤ Message ├──────────────────────────┐
-│______________________________________________________________│
-└──────────────────────────────────────────────────────────────┘
-```
+<img width="1035" height="710" alt="appshot" src="https://github.com/user-attachments/assets/2395c53b-b6eb-4ddd-881a-11252a7fd274" />
+
 
 ## Installing
 
