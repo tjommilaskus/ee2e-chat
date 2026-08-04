@@ -26,6 +26,9 @@ pub const NONCE_LEN: usize = 24;
 /// derived here can never collide with one derived for some other purpose.
 const KDF_CONTEXT: &[u8] = b"ee2e-chat v1 message key";
 
+/// Separate context so a fingerprint can never coincide with a derived key.
+const FINGERPRINT_CONTEXT: &[u8] = b"ee2e-chat v1 fingerprint";
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum CryptoError {
     BadPublicKey,
@@ -80,6 +83,25 @@ pub fn generate_keypair() -> Keypair {
         public_key: public.as_bytes().to_vec(),
         secret_key: secret.to_bytes().to_vec(),
     }
+}
+
+/// A short, human-comparable rendering of a public key.
+///
+/// Users read these to each other over a channel an attacker does not control;
+/// if they match, there is no machine-in-the-middle. Truncating to 64 bits is
+/// adequate because an attacker has to find a *second preimage* of one specific
+/// displayed value, and because nobody would read out more digits than this.
+pub fn fingerprint(public_key: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(FINGERPRINT_CONTEXT);
+    hasher.update(public_key);
+    let digest = hasher.finalize();
+
+    digest[..8]
+        .chunks(2)
+        .map(|pair| format!("{:02X}{:02X}", pair[0], pair[1]))
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 /// Derive the public key that corresponds to a secret key.

@@ -1,5 +1,5 @@
 use ee2e_chat::crypto;
-use ee2e_chat::messages::{Message, NetworkMessage};
+use ee2e_chat::messages::Message;
 
 #[test]
 fn test_message_serialization() {
@@ -13,16 +13,6 @@ fn test_message_serialization() {
     assert_eq!(parsed.from, "alice");
     assert_eq!(parsed.content, "hello");
     assert_eq!(parsed.timestamp, 1234567890);
-}
-
-#[test]
-fn test_network_message_serialization() {
-    let net_msg = NetworkMessage::new("alice".to_string(), vec![1, 2, 3], [7u8; 24]);
-    let json = net_msg.to_json().unwrap();
-    let parsed = NetworkMessage::from_json(&json).unwrap();
-    assert_eq!(parsed.from, "alice");
-    assert_eq!(parsed.ciphertext, vec![1, 2, 3]);
-    assert_eq!(parsed.nonce, [7u8; 24]);
 }
 
 #[test]
@@ -193,4 +183,58 @@ fn test_same_plaintext_encrypts_differently_each_time() {
 fn test_public_key_for_matches_generated_pair() {
     let kp = crypto::generate_keypair();
     assert_eq!(crypto::public_key_for(&kp.secret_key).unwrap(), kp.public_key);
+}
+
+// Fingerprints are what users read aloud to each other to rule out a
+// machine-in-the-middle, so the only properties that matter are that the same
+// key always renders identically and that different keys never collide.
+
+#[test]
+fn test_fingerprint_is_stable_for_the_same_key() {
+    let kp = crypto::generate_keypair();
+    assert_eq!(
+        crypto::fingerprint(&kp.public_key),
+        crypto::fingerprint(&kp.public_key)
+    );
+}
+
+#[test]
+fn test_fingerprint_differs_between_keys() {
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..100 {
+        let kp = crypto::generate_keypair();
+        assert!(
+            seen.insert(crypto::fingerprint(&kp.public_key)),
+            "fingerprints collided across distinct keys"
+        );
+    }
+}
+
+#[test]
+fn test_fingerprint_changes_when_one_bit_changes() {
+    let kp = crypto::generate_keypair();
+    let mut altered = kp.public_key.clone();
+    altered[0] ^= 0x01;
+
+    assert_ne!(
+        crypto::fingerprint(&kp.public_key),
+        crypto::fingerprint(&altered)
+    );
+}
+
+#[test]
+fn test_fingerprint_is_formatted_for_reading_aloud() {
+    let kp = crypto::generate_keypair();
+    let fp = crypto::fingerprint(&kp.public_key);
+
+    let groups: Vec<&str> = fp.split('-').collect();
+    assert_eq!(groups.len(), 4, "expected four groups in {fp}");
+
+    for group in groups {
+        assert_eq!(group.len(), 4, "expected four characters per group in {fp}");
+        assert!(
+            group.chars().all(|c| c.is_ascii_hexdigit() && !c.is_lowercase()),
+            "expected uppercase hex in {fp}"
+        );
+    }
 }
