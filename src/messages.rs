@@ -34,11 +34,11 @@ impl Message {
 pub struct NetworkMessage {
     pub from: String,
     pub ciphertext: Vec<u8>,
-    pub nonce: [u8; 24],
+    pub nonce: [u8; 12],
 }
 
 impl NetworkMessage {
-    pub fn new(from: String, ciphertext: Vec<u8>, nonce: [u8; 24]) -> Self {
+    pub fn new(from: String, ciphertext: Vec<u8>, nonce: [u8; 12]) -> Self {
         NetworkMessage {
             from,
             ciphertext,
