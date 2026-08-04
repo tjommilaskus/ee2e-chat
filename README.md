@@ -29,9 +29,23 @@ curl -fsSL https://raw.githubusercontent.com/tjommilaskus/ee2e-chat/main/install
 Or from a clone, `./install.sh`.
 
 Either way it builds from source and installs to `~/.local/bin`, so it never
-needs root. `--prefix DIR` puts it elsewhere and `--uninstall` removes it
-again. Rust is the only requirement, and the script says how to get it if it is
-missing.
+needs root. `--prefix DIR` puts it elsewhere, `--uninstall` removes it again.
+
+**Rust is the only requirement.** If it is missing the script offers to install
+it through rustup, which also goes under your home directory and needs no root.
+Add `--with-rust` to accept without being asked — useful when piping from curl,
+where there may be no terminal to answer on. To install it yourself instead:
+
+| | |
+|---|---|
+| Arch | `sudo pacman -S rust` |
+| Debian / Ubuntu | `sudo apt install cargo` |
+| Fedora | `sudo dnf install cargo` |
+| macOS | `brew install rust` |
+| Anywhere | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+
+Copying the room code also wants a clipboard tool — `wl-clipboard` on Wayland,
+`xclip` on X11 — but everything else works without one.
 
 To build without installing anything:
 
@@ -45,21 +59,27 @@ Start it with no arguments and it asks who you are and who to connect to. Each
 field is explained beneath it; PgUp/PgDn scrolls if your terminal is short.
 
 ```
-┌────────────────┤ ⌐ TIO CHAT ¬ ├────────────────┐
-│ Your name                                      │
-│ Sue___________________________________________ │
-│                                                │
-│ Listen on                                      │
-│ 0.0.0.0:9999__________________________________ │
-│                                                │
-│ Connect to a peer  (blank to wait for others)  │
-│ 127.0.0.1:9001________________________________ │
-│                                                │
-│                               <Connect> <Quit> │
-└────────────────────────────────────────────────┘
+┌──────────────────────┤ ⌐ TIO CHAT ¬ ├──────────────────────┐
+│ Your name                                                ▒ │
+│ Sue_____________________________________________         ▒ │
+│ What everyone else sees next to your messages. Anyone    ▒ │
+│ can choose any name, including yours, so it proves       ▒ │
+│ nothing on its own -- the fingerprint underneath it is   ▒ │
+│ what actually identifies you.                            ▒ │
+│                                                          ▒ │
+│ Listen on                                                ▒ │
+│ 0.0.0.0:9999____________________________________         ▒ │
+│ The address on this machine that others connect to...    ▒ │
+│                                                          ▒ │
+│ Connect to a peer                                        ▒ │
+│ 192.168.1.42:9001_______________________________         ▒ │
+│                                                            │
+│              <Connect> <Copy room code> <Quit>             │
+└────────────────────────────────────────────────────────────┘
 ```
 
-Leave *Connect to* blank on the first machine and let the others dial it.
+Leave *Connect to a peer* blank on the first machine and let the others dial
+it.
 
 Everything on that screen can be passed on the command line instead, which
 skips it entirely:
@@ -168,14 +188,53 @@ says so and shows both fingerprints. **The fingerprint is the identity.**
 ## Talking to someone not on your network
 
 Peers have to be able to reach each other, and two home connections generally
-cannot. The straightforward answer is a VPN such as
-[Tailscale](https://tailscale.com): install it on both machines, run
-`tailscale ip -4` to find your address, and have the other person connect to
-that. Nothing else changes.
+cannot. There are two ways round it.
 
-Forwarding a port on your router also works, if your connection has a real
-public address rather than a carrier-grade NAT one. The room code is what makes
-that safe to do — without it, an open port would be an open room.
+### Easiest: a VPN
+
+[Tailscale](https://tailscale.com) needs no router access and no forwarding.
+Install it on both machines, invite the other person to your tailnet, then:
+
+```
+tailscale ip -4          # e.g. 100.101.102.103
+```
+
+You listen on `0.0.0.0:9999`; they connect to `100.101.102.103:9999`. Nothing
+else changes, and because only your tailnet can reach the port, nobody else
+ever gets as far as the handshake.
+
+### Or forward a port
+
+**Only one person needs to.** Everyone else connects to them, and gossip does
+the rest.
+
+| | |
+|---|---|
+| Protocol | **TCP** (no UDP is used) |
+| Port | Whatever `--listen` says — **9999** by default |
+| Forward to | That machine's LAN address, same port |
+
+So on the router: forward **TCP 9999** to, say, `192.168.1.42:9999`. Then run
+with `--listen 0.0.0.0:9999`, which accepts on every interface rather than only
+the loopback one.
+
+If your firewall is on, let it through as well:
+
+```
+sudo ufw allow 9999/tcp                 # Debian/Ubuntu, and Arch if you use ufw
+sudo firewall-cmd --add-port=9999/tcp --permanent && sudo firewall-cmd --reload
+```
+
+Your friends then connect to `<your public address>:9999`, which you can find
+with `curl ifconfig.me`.
+
+**Check for carrier-grade NAT first.** If your router's WAN address does not
+match what `curl ifconfig.me` returns, your ISP is sharing that address between
+customers and forwarding cannot work — use the VPN instead.
+
+Forwarding a port does expose it to the internet, where scanners find it within
+hours. That is safe here only because of the room code: without it an open port
+would be an open room.
 
 ## How it works
 

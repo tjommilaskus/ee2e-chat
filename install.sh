@@ -2,6 +2,7 @@
 # Build and install tio-chat (ee2e-chat).
 #
 #   ./install.sh                 install to ~/.local/bin
+#   ./install.sh --with-rust     install Rust too, if it is missing
 #   ./install.sh --prefix /usr   install to /usr/bin (needs write access)
 #   ./install.sh --uninstall     remove it again
 #
@@ -14,6 +15,8 @@ PREFIX="${PREFIX:-$HOME/.local}"
 # Overridable so a fork can be installed without editing this file.
 REPO="${EE2E_REPO:-https://github.com/tjommilaskus/ee2e-chat.git}"
 UNINSTALL=0
+WITH_RUST=0
+RUST_WAS_INSTALLED=0
 
 # Colour only when writing to a terminal, so piping to a file stays readable.
 if [ -t 1 ]; then
@@ -33,12 +36,16 @@ usage() {
 Usage: install.sh [options]
 
   --prefix DIR   install under DIR (default: \$HOME/.local)
+  --with-rust    install Rust via rustup if missing, without asking first
   --uninstall    remove an installed copy
   -h, --help     this message
 
 Environment:
   PREFIX         same as --prefix
   EE2E_REPO      git URL to clone when run outside a checkout
+
+Rust is the only requirement. If it is missing you are offered rustup, which
+installs under your home directory and needs no root.
 EOF
 }
 
@@ -46,6 +53,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --prefix) [ $# -ge 2 ] || die "--prefix needs a directory"; PREFIX="$2"; shift 2 ;;
         --prefix=*) PREFIX="${1#*=}"; shift ;;
+        --with-rust|-y) WITH_RUST=1; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown option: $1  (try --help)" ;;
@@ -107,11 +115,55 @@ if ! command -v cargo >/dev/null 2>&1; then
     say ""
     say "${B}Rust is not installed.${R} tio-chat is built from source, so it is needed."
     say ""
-    say "  Arch:      sudo pacman -S rust"
-    say "  Debian:    sudo apt install cargo"
-    say "  Anywhere:  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-    say ""
-    die "install Rust, then run this again"
+
+    # Opened rather than merely tested for: /dev/tty exists even with no
+    # controlling terminal, and only opening it reveals that. Testing with
+    # `[ -r ]` prints the question and then fails to read an answer.
+    if [ "$WITH_RUST" -eq 1 ]; then
+        answer=y
+    elif { true < /dev/tty; } 2>/dev/null; then
+        # Read from the terminal, not stdin. Under `curl | sh` stdin is the
+        # script itself, and reading it here would swallow the rest of this
+        # file instead of an answer.
+        printf '%sInstall it now with rustup? It installs under your home directory and needs no root. [y/N] %s' "$B" "$R"
+        read -r answer < /dev/tty || answer=n
+        say ""
+    else
+        answer=n
+    fi
+
+    case "$answer" in
+        y|Y|yes|YES)
+            command -v curl >/dev/null 2>&1 || die "curl is needed to fetch rustup"
+            step "installing Rust via rustup"
+            # -y because we already asked; rustup would otherwise prompt on a
+            # terminal we may not have.
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+                | sh -s -- -y --no-modify-path >/dev/null 2>&1 \
+                || die "rustup failed; install Rust yourself and run this again"
+
+            # rustup only edits shell profiles, which do not affect a shell
+            # already running, so the environment is applied by hand.
+            if [ -f "$HOME/.cargo/env" ]; then
+                # shellcheck disable=SC1091
+                . "$HOME/.cargo/env"
+            fi
+            command -v cargo >/dev/null 2>&1 || die "Rust installed but cargo is still not on PATH"
+            step "Rust installed"
+            RUST_WAS_INSTALLED=1
+            ;;
+        *)
+            say "  Arch:      sudo pacman -S rust"
+            say "  Debian:    sudo apt install cargo"
+            say "  Fedora:    sudo dnf install cargo"
+            say "  macOS:     brew install rust"
+            say "  Anywhere:  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+            say ""
+            say "Or re-run this with --with-rust to have it done for you."
+            say ""
+            die "install Rust, then run this again"
+            ;;
+    esac
 fi
 
 # --- build -------------------------------------------------------------------
@@ -152,6 +204,15 @@ else
     say "    export PATH=\"$DEST:\$PATH\""
     say ""
     say "Until then, run it with:  ${B}$TARGET${R}"
+fi
+
+if [ "$RUST_WAS_INSTALLED" -eq 1 ]; then
+    say ""
+    say "Rust was installed for you. To use cargo in future shells, add:"
+    say ""
+    say "    . \"\$HOME/.cargo/env\""
+    say ""
+    say "to your ~/.bashrc, or just open a new terminal."
 fi
 
 say ""
