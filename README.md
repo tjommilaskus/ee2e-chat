@@ -4,7 +4,7 @@ End-to-end encrypted terminal chat with no server. Every participant runs the
 same program, nodes connect directly to one another, and the rest of the room
 is discovered by gossip.
 
-<img width="1035" height="710" alt="appshot" src="https://github.com/user-attachments/assets/2395c53b-b6eb-4ddd-881a-11252a7fd274" />
+<img width="600" height="400" alt="appshot" src="https://github.com/user-attachments/assets/2395c53b-b6eb-4ddd-881a-11252a7fd274" />
 
 
 ## Installing
