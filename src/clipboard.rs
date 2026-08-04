@@ -10,13 +10,16 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-/// Tools to try, in order. Wayland first, since a Wayland session may also have
-/// the X11 tools present through XWayland and they would write to the wrong
-/// clipboard.
+/// Tools to try, in order.
+///
+/// Wayland before X11, since a Wayland session often has the X11 tools present
+/// through XWayland and they would write to a clipboard nothing is reading.
+/// `pbcopy` is always present on macOS, so its position hardly matters.
 const TOOLS: &[(&str, &[&str])] = &[
     ("wl-copy", &[]),
     ("xclip", &["-selection", "clipboard"]),
     ("xsel", &["--clipboard", "--input"]),
+    ("pbcopy", &[]),
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -31,7 +34,8 @@ impl std::fmt::Display for CopyError {
         match self {
             CopyError::NoTool => write!(
                 f,
-                "no clipboard tool found -- install wl-clipboard (Wayland) or xclip (X11)"
+                "no clipboard tool found -- install wl-clipboard (Wayland) or xclip (X11). \
+                 macOS has pbcopy already, so seeing this there means PATH is unusual."
             ),
             CopyError::Failed(why) => write!(f, "could not copy: {why}"),
         }

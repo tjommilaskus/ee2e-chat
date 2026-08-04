@@ -5,10 +5,10 @@
 
 use ee2e_chat::clipboard::{self, CopyError};
 
+const TOOLS: &[&str] = &["wl-copy", "xclip", "xsel", "pbcopy"];
+
 fn any_tool_installed() -> bool {
-    ["wl-copy", "xclip", "xsel"]
-        .iter()
-        .any(|tool| which(tool).is_some())
+    TOOLS.iter().any(|tool| which(tool).is_some())
 }
 
 fn which(tool: &str) -> Option<()> {
@@ -24,7 +24,7 @@ fn which(tool: &str) -> Option<()> {
 fn test_copying_either_works_or_explains_itself() {
     match clipboard::copy("TIO-1111-1111-1111-1111") {
         Ok(tool) => assert!(
-            ["wl-copy", "xclip", "xsel"].contains(&tool),
+            TOOLS.contains(&tool),
             "reported an unexpected tool: {tool}"
         ),
         Err(e) => {
@@ -55,4 +55,11 @@ fn test_copying_never_panics() {
     let _ = clipboard::copy("");
     let _ = clipboard::copy(&"x".repeat(100_000));
     let _ = clipboard::copy("a line\nand another");
+}
+
+/// macOS ships pbcopy, so a build that does not know about it would report "no
+/// clipboard tool" on a machine that plainly has one.
+#[test]
+fn test_pbcopy_is_among_the_tools_tried() {
+    assert!(TOOLS.contains(&"pbcopy"), "macOS would have no clipboard");
 }

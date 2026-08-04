@@ -7,6 +7,19 @@ is discovered by gossip.
 <img width="600" height="400" alt="appshot" src="https://github.com/user-attachments/assets/2395c53b-b6eb-4ddd-881a-11252a7fd274" />
 
 
+## Platforms
+
+| | |
+|---|---|
+| **Linux** | Supported. Developed and tested here. |
+| **macOS** | Supported. Compiles cleanly and uses `pbcopy` for the clipboard. Config goes to `~/.config/ee2e-chat` rather than `~/Library/Application Support`. |
+| **Windows** | **Not supported.** It does not compile. |
+
+Windows would need three things: the `0600` file permissions have no equivalent
+there and are guarded by nothing, `$HOME` is generally unset so the config path
+cannot be resolved, and the clipboard needs `clip.exe`. Patches welcome; it has
+never been attempted.
+
 ## Installing
 
 ```
@@ -86,9 +99,9 @@ One is created the first time you run the program:
 ```
 
 The setup screen shows it with a **Copy room code** button, and `/room` copies
-it once you are in the chat. Copying needs a clipboard tool — `wl-clipboard` on
-Wayland, `xclip` or `xsel` on X11 — and if none is installed the code is shown
-on screen to read out instead.
+it once you are in the chat. Copying uses whichever tool is installed —
+`wl-clipboard` on Wayland, `xclip` or `xsel` on X11, `pbcopy` on macOS — and if
+none is found the code is shown on screen to read out instead.
 
 Send it to your friends however you like. They pass it once:
 
@@ -228,7 +241,7 @@ and the limitations above are the ones that are *known*.
 ## Development
 
 ```
-cargo test      # 135 tests
+cargo test      # 136 tests
 cargo clippy --all-targets
 ```
 
