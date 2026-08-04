@@ -2,10 +2,10 @@
 // with `mod` would compile a second, incompatible copy of every type into this
 // binary, so this file only ever `use`s them.
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use ee2e_chat::identity;
 use ee2e_chat::node::{Event, Node};
-use ee2e_chat::ui;
+use ee2e_chat::{ui, update};
 use ee2e_chat::room::{self, RoomCode};
 use ee2e_chat::ui::{Launcher, Startup};
 use std::path::PathBuf;
@@ -13,11 +13,14 @@ use tokio::sync::mpsc;
 
 #[derive(Parser)]
 #[command(
-    name = "ee2e-chat",
+    name = "chat",
     version,
     about = "End-to-end encrypted peer-to-peer terminal chat"
 )]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Display name shown to other peers. Carries no authority -- peers are
     /// identified by key fingerprint. Omit it to be asked on a setup screen.
     #[arg(long)]
@@ -57,6 +60,12 @@ struct Args {
     plain: bool,
 }
 
+#[derive(Subcommand)]
+enum Command {
+    /// Fetch and install the latest version.
+    Update,
+}
+
 // Returning `Result` from `main` would render the error with `Debug`, turning
 // a multi-line message into one line of escape sequences. These are read by
 // people, so they are printed rather than returned.
@@ -72,6 +81,13 @@ fn main() {
 // alongside it.
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+
+    // Handled before anything else is set up: updating needs no identity, no
+    // room and no runtime.
+    if let Some(Command::Update) = args.command {
+        return update::run();
+    }
+
     let runtime = tokio::runtime::Runtime::new()?;
 
     let (events_tx, events_rx) = mpsc::unbounded_channel();

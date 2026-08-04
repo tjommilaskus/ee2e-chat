@@ -8,3 +8,4 @@ pub mod protocol;
 pub mod room;
 pub mod secretfile;
 pub mod ui;
+pub mod update;

@@ -3,6 +3,12 @@ name = "ee2e-chat"
 version = "0.1.0"
 edition = "2024"
 
+# The command is `chat`. The package keeps its old name so the library crate
+# stays `ee2e_chat` and every `use` in the tests goes on working.
+[[bin]]
+name = "chat"
+path = "src/main.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }

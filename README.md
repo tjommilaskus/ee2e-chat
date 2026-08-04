@@ -26,7 +26,7 @@ never been attempted.
 curl -fsSL https://raw.githubusercontent.com/tjommilaskus/ee2e-chat/main/install.sh | sh
 ```
 
-Or from a clone, `./install.sh`.
+Or from a clone, `./install.sh`. The installed command is **`chat`**.
 
 Either way it builds from source and installs to `~/.local/bin`, so it never
 needs root. `--prefix DIR` puts it elsewhere, `--uninstall` removes it again.
@@ -50,7 +50,7 @@ Copying the room code also wants a clipboard tool — `wl-clipboard` on Wayland,
 To build without installing anything:
 
 ```
-cargo build --release && ./target/release/ee2e-chat
+cargo build --release && ./target/release/chat
 ```
 
 ## Running it
@@ -85,9 +85,9 @@ Everything on that screen can be passed on the command line instead, which
 skips it entirely:
 
 ```
-ee2e-chat --name alice --listen 0.0.0.0:9001
-ee2e-chat --name bob   --listen 0.0.0.0:9002 --connect 192.168.1.42:9001
-ee2e-chat --name carol --listen 0.0.0.0:9003 --connect 192.168.1.43:9002
+chat --name alice --listen 0.0.0.0:9001
+chat --name bob   --listen 0.0.0.0:9002 --connect 192.168.1.42:9001
+chat --name carol --listen 0.0.0.0:9003 --connect 192.168.1.43:9002
 ```
 
 Carol only needs to know *one* address. Gossip introduces her to alice, and the
@@ -107,6 +107,17 @@ without `--name`, say — prefills the setup screen rather than being ignored.
 `--plain` gives line-by-line output instead of the full interface, which is
 easier to pipe somewhere. It has no setup screen to ask on, so it needs
 `--name`.
+
+### Updating
+
+```
+chat update
+```
+
+Fetches the current version and installs it over the one you are running. It
+reuses the install script, so there is one description of how installing works
+rather than two that could disagree, and it refuses if the copy you ran was
+built rather than installed.
 
 ## Rooms
 
@@ -129,7 +140,7 @@ none is found the code is shown on screen to read out instead.
 Send it to your friends however you like. They pass it once:
 
 ```
-ee2e-chat --room TIO-TEPJ-QYH0-DBKA-JPXR --connect 192.168.1.42:9001
+chat --room TIO-TEPJ-QYH0-DBKA-JPXR --connect 192.168.1.42:9001
 ```
 
 and it is remembered from then on. It can also be typed into the setup screen,

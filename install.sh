@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build and install tio-chat (ee2e-chat).
+# Build and install TIO CHAT. The installed command is `chat`.
 #
 #   ./install.sh                 install to ~/.local/bin
 #   ./install.sh --with-rust     install Rust too, if it is missing
@@ -10,7 +10,7 @@
 
 set -eu
 
-BIN=ee2e-chat
+BIN=chat
 PREFIX="${PREFIX:-$HOME/.local}"
 # Overridable so a fork can be installed without editing this file.
 REPO="${EE2E_REPO:-https://github.com/tjommilaskus/ee2e-chat.git}"
@@ -113,7 +113,7 @@ fi
 
 if ! command -v cargo >/dev/null 2>&1; then
     say ""
-    say "${B}Rust is not installed.${R} tio-chat is built from source, so it is needed."
+    say "${B}Rust is not installed.${R} This is built from source, so it is needed."
     say ""
 
     # Opened rather than merely tested for: /dev/tty exists even with no
@@ -221,4 +221,6 @@ say "connect to. Or skip the prompt:"
 say ""
 say "    $BIN --name alice --listen 0.0.0.0:9001"
 say "    $BIN --name bob --listen 0.0.0.0:9002 --connect 192.168.1.42:9001"
+say ""
+say "Later, ${B}$BIN update${R} fetches and installs the latest version."
 say ""
