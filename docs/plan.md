@@ -217,7 +217,7 @@ warning and does not kill the connection.
 
 ---
 
-## Stage 6 — Cursive retro UI
+## Stage 6 — Cursive retro UI ✅ COMPLETE
 
 Replaces `println!` with a green-on-blue cursive interface: scrolling messages,
 input line, peer sidebar with fingerprints.

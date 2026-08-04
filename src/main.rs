@@ -4,6 +4,7 @@
 
 use clap::Parser;
 use ee2e_chat::node::{Event, Node, NodeConfig};
+use ee2e_chat::ui;
 use std::net::SocketAddr;
 use tokio::net::lookup_host;
 use tokio::sync::mpsc;
@@ -23,39 +24,61 @@ struct Args {
     /// A peer to dial on startup. The rest of the room is discovered from it.
     #[arg(long)]
     connect: Option<String>,
+
+    /// Plain line-by-line output instead of the full interface. Useful when a
+    /// full-screen UI would get in the way, such as piping a session to a file.
+    #[arg(long)]
+    plain: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+// Not `#[tokio::main]`. Cursive's event loop blocks whichever thread it runs
+// on, so it takes the main thread and the runtime is built by hand to live
+// alongside it.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    let runtime = tokio::runtime::Runtime::new()?;
 
-    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
-    let (node, bound) = Node::start(
+    let (events_tx, events_rx) = mpsc::unbounded_channel();
+    let (node, bound) = runtime.block_on(Node::start(
         NodeConfig {
             name: args.name,
             listen: args.listen,
         },
         events_tx,
-    )
-    .await?;
-
-    println!("you are {} · {}", node.name(), node.fingerprint());
-    println!("listening on {bound}");
+    ))?;
 
     if let Some(target) = args.connect {
         // Resolved rather than parsed, so a hostname works as well as an IP.
-        let addr = lookup_host(&target)
-            .await
-            .map_err(|e| format!("could not resolve {target}: {e}"))?
-            .next()
-            .ok_or_else(|| format!("{target} resolved to no addresses"))?;
+        let dialled = runtime.block_on(async {
+            let addr = lookup_host(&target)
+                .await
+                .map_err(|e| format!("could not resolve {target}: {e}"))?
+                .next()
+                .ok_or_else(|| format!("{target} resolved to no addresses"))?;
+            node.connect(addr)
+                .await
+                .map_err(|e| format!("could not reach {addr}: {e}"))?;
+            Ok::<_, String>(addr)
+        });
 
-        match node.connect(addr).await {
-            Ok(()) => println!("dialling {addr}"),
-            Err(e) => eprintln!("could not reach {addr}: {e}"),
+        if let Err(e) = dialled {
+            eprintln!("{e}");
         }
     }
 
+    if args.plain {
+        runtime.block_on(plain(node, bound, events_rx));
+    } else {
+        ui::run(node, events_rx, runtime.handle().clone());
+    }
+
+    Ok(())
+}
+
+/// Line-by-line mode: the same event stream, printed instead of drawn.
+async fn plain(node: Node, bound: SocketAddr, mut events: mpsc::UnboundedReceiver<Event>) {
+    println!("you are {} · {}", node.name(), node.fingerprint());
+    println!("listening on {bound}");
     println!("type a message and press enter · ctrl-d to quit");
 
     let typing = node.clone();
@@ -67,28 +90,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    while let Some(event) = events_rx.recv().await {
+    while let Some(event) = events.recv().await {
         match event {
             Event::Listening(_) => {}
             Event::Message {
-                from,
-                fingerprint,
-                content,
-            } => {
-                // The fingerprint is shown so two peers sharing a display name
-                // stay distinguishable.
-                println!("<{from} {}> {content}", &fingerprint[..9]);
-            }
-            Event::PeerJoined { name, fingerprint } => {
-                println!("* {name} joined · {fingerprint}")
-            }
-            Event::PeerLeft { name, fingerprint } => {
-                println!("* {name} left · {fingerprint}")
-            }
+                from, fingerprint, content,
+            } => println!("<{from} {}> {content}", &fingerprint[..9]),
+            Event::PeerJoined { name, fingerprint } => println!("* {name} joined · {fingerprint}"),
+            Event::PeerLeft { name, fingerprint } => println!("* {name} left · {fingerprint}"),
             Event::NameConflict {
-                name,
-                existing,
-                incoming,
+                name, existing, incoming,
             } => {
                 println!("! two peers are calling themselves {name}: {existing} and {incoming}");
                 println!("! check fingerprints before trusting either");
@@ -97,6 +108,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::Warning(text) => eprintln!("! {text}"),
         }
     }
-
-    Ok(())
 }
