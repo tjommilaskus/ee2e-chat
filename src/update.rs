@@ -1,10 +1,14 @@
 //! `chat update` -- fetch and install the latest version.
 //!
-//! Delegates to the same install script the README hands out, so there is one
-//! description of how installing works rather than two that can disagree. The
-//! script is downloaded to a file and run with arguments rather than piped
-//! through a shell, so a path containing spaces or quotes cannot turn into
-//! something else on the way.
+//! Clones the repository and runs the install script out of that clone, rather
+//! than downloading the script on its own. Two reasons: the script installs
+//! from a checkout when it finds one beside itself, so this fetches the source
+//! once instead of twice; and GitHub's raw host caches for several minutes,
+//! which is long enough to hand back the previous script immediately after a
+//! release -- exactly when being current matters most. A clone is never stale.
+//!
+//! Delegating to that script rather than reimplementing its steps keeps one
+//! description of how installing works instead of two that could drift.
 //!
 //! Replacing the running binary is safe: the script installs under a temporary
 //! name and renames it into place, which swaps the directory entry rather than
@@ -14,8 +18,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const INSTALL_URL: &str =
-    "https://raw.githubusercontent.com/tjommilaskus/ee2e-chat/main/install.sh";
+const REPO_URL: &str = "https://github.com/tjommilaskus/ee2e-chat.git";
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
@@ -24,9 +27,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("installed at {}", exe.display());
     println!("current version {}", env!("CARGO_PKG_VERSION"));
     println!();
-    // Said out loud, because this runs a script fetched over the network and
+    // Said out loud, because this fetches and runs code over the network and
     // that should never be a surprise.
-    println!("fetching {INSTALL_URL}");
+    println!("fetching {REPO_URL}");
 
     // Noted so the install can be checked to have actually replaced *this*
     // binary. An installer that writes under a different name would otherwise
@@ -34,10 +37,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // afterwards would be this same unchanged copy answering.
     let before = modified(&exe);
 
-    let script = download()?;
-    let result = install(&script, &prefix);
-    let _ = std::fs::remove_file(&script);
-    result?;
+    let workspace = TempDir::new()?;
+    let source = workspace.path().join("src");
+
+    clone(&source)?;
+    install(&source, &prefix)?;
 
     println!();
     if modified(&exe) == before {
@@ -61,10 +65,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-fn modified(path: &Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
 }
 
 /// Work out what `--prefix` this copy was installed with.
@@ -92,32 +92,38 @@ fn prefix_for(exe: &Path) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("could not work out a prefix from {}", bin_dir.display()))
 }
 
-fn download() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let path = std::env::temp_dir().join(format!("chat-install-{}.sh", std::process::id()));
-
-    let status = Command::new("curl")
-        .arg("-fsSL")
-        .arg(INSTALL_URL)
-        .arg("-o")
-        .arg(&path)
+fn clone(into: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let status = Command::new("git")
+        .arg("clone")
+        .arg("--depth")
+        .arg("1")
+        .arg(REPO_URL)
+        .arg(into)
         .status()
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => {
-                "curl is needed to update, and is not installed".to_string()
+                "git is needed to update, and is not installed".to_string()
             }
-            _ => format!("could not run curl: {e}"),
+            _ => format!("could not run git: {e}"),
         })?;
 
     if !status.success() {
-        return Err(format!("could not download {INSTALL_URL}").into());
+        return Err(format!("could not clone {REPO_URL}").into());
     }
 
-    Ok(path)
+    Ok(())
 }
 
-fn install(script: &Path, prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn install(source: &Path, prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let script = source.join("install.sh");
+    if !script.is_file() {
+        return Err("the repository has no install.sh; update it by hand".into());
+    }
+
+    // Arguments rather than a shell string, so a prefix containing spaces or
+    // quotes cannot turn into something else on the way.
     let status = Command::new("sh")
-        .arg(script)
+        .arg(&script)
         .arg("--prefix")
         .arg(prefix)
         .status()
@@ -128,4 +134,31 @@ fn install(script: &Path, prefix: &Path) -> Result<(), Box<dyn std::error::Error
     }
 
     Ok(())
+}
+
+fn modified(path: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
+}
+
+/// A directory removed when it goes out of scope, including on the early
+/// returns above -- so a failed update does not leave a clone behind.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new() -> std::io::Result<Self> {
+        let path = std::env::temp_dir().join(format!("chat-update-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path)?;
+        Ok(TempDir(path))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
