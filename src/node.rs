@@ -170,6 +170,25 @@ pub struct Node {
     inner: Arc<Inner>,
 }
 
+impl fmt::Debug for Node {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut out = f.debug_struct("Node");
+        out.field("name", &self.inner.name)
+            .field("fingerprint", &self.fingerprint())
+            .field("listen_port", &self.inner.listen_port);
+
+        // `try_lock`, because printing a node from inside code that already
+        // holds the lock -- an assertion message, say -- would otherwise
+        // deadlock rather than report anything.
+        match self.inner.state.try_lock() {
+            Ok(state) => out.field("peers", &state.registry.len()),
+            Err(_) => out.field("peers", &"<locked>"),
+        };
+
+        out.finish()
+    }
+}
+
 impl Node {
     /// Bind the listener, start accepting, and return the address actually
     /// bound -- which is the only way to learn the port when asked for zero.

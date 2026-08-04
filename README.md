@@ -19,13 +19,39 @@ is discovered by gossip.
 └──────────────────────────────────────────────────────────────┘
 ```
 
+## Installing
+
+```
+./install.sh
+```
+
+Builds from source and installs to `~/.local/bin`, so it never needs root.
+`--prefix DIR` puts it elsewhere and `--uninstall` removes it again. Rust is
+the only requirement, and the script says how to get it if it is missing.
+
 ## Running it
 
+Start it with no arguments and it asks who you are and who to connect to:
+
 ```
-cargo build --release
+┌────────────────┤ ⌐ TIO CHAT ¬ ├────────────────┐
+│ Your name                                      │
+│ Sue___________________________________________ │
+│                                                │
+│ Listen on                                      │
+│ 0.0.0.0:9999__________________________________ │
+│                                                │
+│ Connect to a peer  (blank to wait for others)  │
+│ 127.0.0.1:9001________________________________ │
+│                                                │
+│                               <Connect> <Quit> │
+└────────────────────────────────────────────────┘
 ```
 
-Start one node, then point the others at it:
+Leave *Connect to* blank on the first machine and let the others dial it.
+
+Everything on that screen can be passed on the command line instead, which
+skips it entirely:
 
 ```
 ee2e-chat --name alice --listen 0.0.0.0:9001
@@ -34,7 +60,8 @@ ee2e-chat --name carol --listen 0.0.0.0:9003 --connect 192.168.1.43:9002
 ```
 
 Carol only needs to know *one* address. Gossip introduces her to alice, and the
-three connect directly to each other.
+three connect directly to each other. Anything given partially — `--listen`
+without `--name`, say — prefills the setup screen rather than being ignored.
 
 | | |
 |---|---|
@@ -146,7 +173,7 @@ and the limitations above are the ones that are *known*.
 ## Development
 
 ```
-cargo test      # 101 tests
+cargo test      # 111 tests
 cargo clippy --all-targets
 ```
 

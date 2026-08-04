@@ -4,24 +4,27 @@
 
 use clap::Parser;
 use ee2e_chat::identity;
-use ee2e_chat::node::{Event, Node, NodeConfig};
+use ee2e_chat::node::{Event, Node};
 use ee2e_chat::ui;
-use std::net::SocketAddr;
+use ee2e_chat::ui::{Launcher, Startup};
 use std::path::PathBuf;
-use tokio::net::lookup_host;
 use tokio::sync::mpsc;
 
 #[derive(Parser)]
-#[command(name = "ee2e-chat", about = "End-to-end encrypted peer-to-peer terminal chat")]
+#[command(
+    name = "ee2e-chat",
+    version,
+    about = "End-to-end encrypted peer-to-peer terminal chat"
+)]
 struct Args {
     /// Display name shown to other peers. Carries no authority -- peers are
-    /// identified by key fingerprint.
+    /// identified by key fingerprint. Omit it to be asked on a setup screen.
     #[arg(long)]
-    name: String,
+    name: Option<String>,
 
     /// Address to accept connections on.
-    #[arg(long, default_value = "0.0.0.0:9999")]
-    listen: SocketAddr,
+    #[arg(long, default_value = ui::DEFAULT_LISTEN)]
+    listen: String,
 
     /// A peer to dial on startup. The rest of the room is discovered from it.
     #[arg(long)]
@@ -67,51 +70,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let startup = events_tx.clone();
 
     let (keypair, identity_notes) = resolve_identity(args.ephemeral, args.identity)?;
-
-    let (node, bound) = runtime.block_on(Node::start(
-        NodeConfig {
-            name: args.name,
-            listen: args.listen,
-            identity: keypair,
-        },
-        events_tx,
-    ))?;
-
     for note in identity_notes {
         let _ = startup.send(note);
     }
 
-    if let Some(target) = args.connect {
-        // Resolved rather than parsed, so a hostname works as well as an IP.
-        let dialled = runtime.block_on(async {
-            let addr = lookup_host(&target)
-                .await
-                .map_err(|e| format!("could not resolve {target}: {e}"))?
-                .next()
-                .ok_or_else(|| format!("{target} resolved to no addresses"))?;
-            node.connect(addr)
-                .await
-                .map_err(|e| format!("could not reach {addr}: {e}"))?;
-            Ok::<_, String>(addr)
-        });
+    let launcher = Launcher::new(runtime.handle().clone(), keypair, events_tx);
 
-        match dialled {
-            Ok(addr) => {
-                let _ = startup.send(Event::Notice(format!("dialling {addr}")));
-            }
-            Err(e) => {
-                let _ = startup.send(Event::Warning(e));
-                let _ = startup.send(Event::Notice(
-                    "nobody else has to be running -- others can connect to you".to_string(),
-                ));
-            }
-        }
-    }
+    // An empty name is what asks for the setup screen. Anything else given on
+    // the command line prefills it.
+    let startup = Startup {
+        name: args.name.unwrap_or_default(),
+        listen: args.listen,
+        connect: args.connect,
+    };
 
     if args.plain {
-        runtime.block_on(plain(node, bound, events_rx));
+        if startup.name.trim().is_empty() {
+            return Err("--plain needs --name: it has no setup screen to ask on".into());
+        }
+        let node = launcher.start(&startup)?;
+        runtime.block_on(plain(node, events_rx));
     } else {
-        ui::run(node, events_rx, runtime.handle().clone());
+        ui::run(launcher, events_rx, startup);
     }
 
     Ok(())
@@ -158,9 +138,8 @@ fn resolve_identity(
 }
 
 /// Line-by-line mode: the same event stream, printed instead of drawn.
-async fn plain(node: Node, bound: SocketAddr, mut events: mpsc::UnboundedReceiver<Event>) {
+async fn plain(node: Node, mut events: mpsc::UnboundedReceiver<Event>) {
     println!("you are {} · {}", node.name(), node.fingerprint());
-    println!("listening on {bound}");
     println!("type a message and press enter · ctrl-d to quit");
 
     let typing = node.clone();
@@ -174,7 +153,7 @@ async fn plain(node: Node, bound: SocketAddr, mut events: mpsc::UnboundedReceive
 
     while let Some(event) = events.recv().await {
         match event {
-            Event::Listening(_) => {}
+            Event::Listening(addr) => println!("listening on {addr}"),
             Event::Message {
                 from, fingerprint, content,
             } => println!("<{from} {}> {content}", &fingerprint[..9]),
