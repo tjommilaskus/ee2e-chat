@@ -250,7 +250,7 @@ inherently racy; it is recorded here rather than papered over.
 
 ---
 
-## Stage 8 — Polish
+## Stage 8 — Polish ✅ COMPLETE
 
 Fingerprint display and name-conflict warnings in the UI, clean disconnect
 handling, `/quit` and `/peers` commands, sensible errors for an unreachable

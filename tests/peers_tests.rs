@@ -1,4 +1,4 @@
-use ee2e_chat::peers::{Admission, Peer, PeerRegistry, Rejection};
+use ee2e_chat::peers::{Admission, NameClash, Peer, PeerRegistry, Rejection};
 use ee2e_chat::protocol::PeerInfo;
 
 const INBOUND: bool = true;
@@ -13,7 +13,7 @@ fn peer(name: &str, k: u8) -> Peer {
 }
 
 fn registry(me: u8) -> PeerRegistry {
-    PeerRegistry::new(key(me))
+    PeerRegistry::new(key(me), "me".to_string())
 }
 
 #[test]
@@ -207,8 +207,8 @@ fn test_reports_a_name_conflict_between_different_keys() {
 
     match reg.admit(peer("alice", 3), INBOUND) {
         Admission::Admitted {
-            name_conflict: Some(existing),
-        } => assert_eq!(existing, real.fingerprint),
+            name_conflict: Some(NameClash::WithPeer { fingerprint }),
+        } => assert_eq!(fingerprint, real.fingerprint),
         other => panic!("expected a name conflict, got {other:?}"),
     }
 
@@ -270,4 +270,64 @@ fn test_undialed_deduplicates() {
 fn test_undialed_on_an_empty_gossip_frame() {
     let reg = registry(1);
     assert!(reg.undialed(&[]).is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Impersonation of the local user
+//
+// We are not in our own registry, so a peer taking our name would otherwise
+// pass unremarked -- the one clash most worth reporting, since anyone skimming
+// for our messages would find theirs.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_a_peer_taking_our_name_is_reported() {
+    let mut reg = PeerRegistry::new(key(1), "alice".to_string());
+
+    assert_eq!(
+        reg.admit(peer("alice", 2), INBOUND),
+        Admission::Admitted {
+            name_conflict: Some(NameClash::WithYou)
+        }
+    );
+    // Reported, not refused: they are still a real peer we can talk to.
+    assert_eq!(reg.len(), 1);
+}
+
+/// Names that differ only by case or padding read as the same name to a person,
+/// which is the only thing a display name is for.
+#[test]
+fn test_near_miss_spellings_of_our_name_are_reported() {
+    for taken in ["ALICE", "Alice", "  alice  "] {
+        let mut reg = PeerRegistry::new(key(1), "alice".to_string());
+        assert_eq!(
+            reg.admit(peer(taken, 2), INBOUND),
+            Admission::Admitted {
+                name_conflict: Some(NameClash::WithYou)
+            },
+            "{taken:?} should be reported as our name"
+        );
+    }
+}
+
+#[test]
+fn test_near_miss_spellings_between_peers_are_reported() {
+    let mut reg = PeerRegistry::new(key(1), "me".to_string());
+    reg.admit(peer("bob", 2), INBOUND);
+
+    assert!(matches!(
+        reg.admit(peer("BOB", 3), INBOUND),
+        Admission::Admitted {
+            name_conflict: Some(NameClash::WithPeer { .. })
+        }
+    ));
+}
+
+#[test]
+fn test_a_distinct_name_is_not_a_conflict() {
+    let mut reg = PeerRegistry::new(key(1), "alice".to_string());
+    assert_eq!(
+        reg.admit(peer("bob", 2), INBOUND),
+        Admission::Admitted { name_conflict: None }
+    );
 }

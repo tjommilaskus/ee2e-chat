@@ -129,6 +129,7 @@ async fn test_a_name_conflict_shows_both_fingerprints() {
             name: "bob".to_string(),
             existing: "1111-1111-1111-1111".to_string(),
             incoming: "2222-2222-2222-2222".to_string(),
+            impersonating_you: false,
         },
     );
 
@@ -187,4 +188,60 @@ async fn test_the_theme_uses_the_retro_palette() {
         "panels should sit a shade above the backdrop"
     );
     assert!(!theme.shadow, "shadows would break the flat retro look");
+}
+
+/// Someone taking your name must be worded unmistakably, not as a generic
+/// clash between two other people.
+#[tokio::test]
+async fn test_impersonation_of_you_is_called_out_explicitly() {
+    let mut siv = ui_for("alice").await;
+
+    ui::apply(
+        &mut siv,
+        Event::NameConflict {
+            name: "alice".to_string(),
+            existing: "1111-1111-1111-1111".to_string(),
+            incoming: "2222-2222-2222-2222".to_string(),
+            impersonating_you: true,
+        },
+    );
+
+    let text = transcript(&mut siv);
+    assert!(text.contains("YOUR name"), "got: {text}");
+    assert!(text.contains("1111-1111-1111-1111"), "got: {text}");
+    assert!(text.contains("2222-2222-2222-2222"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_peers_command_lists_your_own_fingerprint() {
+    let mut siv = Cursive::new();
+    let node = node("alice").await;
+    let fingerprint = node.fingerprint();
+    ui::build(&mut siv, node);
+
+    ui::apply(&mut siv, Event::Notice("---".to_string()));
+    let before = transcript(&mut siv).len();
+
+    // Driven through the real submit path rather than by calling the handler
+    // directly, so this covers the wiring as well as the output.
+    use cursive::event::{Event as Key_, EventResult, Key};
+    use cursive::view::View;
+    use cursive::views::EditView;
+
+    if let Some(cb) = siv.call_on_name("input", |view: &mut EditView| view.set_content("/peers")) {
+        cb(&mut siv);
+    }
+    let result = siv
+        .call_on_name("input", |view: &mut EditView| {
+            view.on_event(Key_::Key(Key::Enter))
+        })
+        .expect("input view should exist");
+    if let EventResult::Consumed(Some(cb)) = result {
+        cb(&mut siv);
+    }
+
+    let text = transcript(&mut siv);
+    assert!(text.len() > before, "the command should have produced output");
+    assert!(text.contains(&fingerprint), "own fingerprint missing: {text}");
+    assert!(text.contains("(you)"), "got: {text}");
 }

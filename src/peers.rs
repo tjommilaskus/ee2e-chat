@@ -46,14 +46,27 @@ impl Peer {
     }
 }
 
+/// Two identities presenting the same display name.
+#[derive(Debug, PartialEq, Eq)]
+pub enum NameClash {
+    /// Another peer already answers to this name.
+    WithPeer { fingerprint: String },
+    /// The name is ours.
+    ///
+    /// Worth separating, because it is the most consequential case: anyone
+    /// skimming the log for their reply from you would find this peer's
+    /// messages instead.
+    WithYou,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Admission {
     /// Accepted. The caller announces the join.
     ///
-    /// `name_conflict` carries the fingerprint of a peer already using this
-    /// display name, when there is one, so the UI can warn instead of
-    /// presenting two different people under one name.
-    Admitted { name_conflict: Option<String> },
+    /// `name_conflict` is set when this peer's display name is already taken,
+    /// so the UI can warn instead of quietly presenting two identities under
+    /// one name.
+    Admitted { name_conflict: Option<NameClash> },
 
     /// Accepted, superseding an earlier connection to the same peer. The caller
     /// closes the previous connection and stays quiet -- this peer already
@@ -73,15 +86,23 @@ pub enum Rejection {
     DuplicateConnection,
 }
 
+/// Names differing only by case or padding would read as the same name to a
+/// person, which is the only thing a display name is for.
+fn same_name(a: &str, b: &str) -> bool {
+    a.trim().to_lowercase() == b.trim().to_lowercase()
+}
+
 pub struct PeerRegistry {
     me: Vec<u8>,
+    my_name: String,
     peers: HashMap<Vec<u8>, Peer>,
 }
 
 impl PeerRegistry {
-    pub fn new(my_public_key: Vec<u8>) -> Self {
+    pub fn new(my_public_key: Vec<u8>, my_name: String) -> Self {
         PeerRegistry {
             me: my_public_key,
+            my_name,
             peers: HashMap::new(),
         }
     }
@@ -106,11 +127,18 @@ impl PeerRegistry {
             };
         }
 
-        let name_conflict = self
-            .peers
-            .values()
-            .find(|existing| existing.name == peer.name)
-            .map(|existing| existing.fingerprint.clone());
+        // Our own name is checked first: we are not in our own registry, so
+        // without this a peer could take our name and nothing would notice.
+        let name_conflict = if same_name(&peer.name, &self.my_name) {
+            Some(NameClash::WithYou)
+        } else {
+            self.peers
+                .values()
+                .find(|existing| same_name(&existing.name, &peer.name))
+                .map(|existing| NameClash::WithPeer {
+                    fingerprint: existing.fingerprint.clone(),
+                })
+        };
 
         self.peers.insert(peer.public_key.clone(), peer);
         Admission::Admitted { name_conflict }

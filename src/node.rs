@@ -12,7 +12,7 @@
 
 use crate::crypto::{self, Keypair, KEY_LEN};
 use crate::messages::Message;
-use crate::peers::{Admission, Peer, PeerRegistry, Rejection};
+use crate::peers::{Admission, NameClash, Peer, PeerRegistry, Rejection};
 use crate::protocol::{Frame, PeerInfo, ProtocolError, MAX_FRAME_BYTES};
 use futures::{SinkExt, StreamExt};
 use std::collections::{HashMap, HashSet};
@@ -56,11 +56,15 @@ pub enum Event {
         name: String,
         fingerprint: String,
     },
-    /// Two different keys are presenting the same display name.
+    /// Two identities are presenting the same display name.
     NameConflict {
         name: String,
+        /// Fingerprint of whoever already answered to the name -- ours when
+        /// `impersonating_you` is set.
         existing: String,
         incoming: String,
+        /// The name taken is our own.
+        impersonating_you: bool,
     },
     /// A message, already decrypted and attributed. Also emitted for our own
     /// messages, so a UI that clears its input line can still show what was
@@ -173,7 +177,7 @@ impl Node {
         let bound = listener.local_addr()?;
 
         let identity = crypto::generate_keypair();
-        let registry = PeerRegistry::new(identity.public_key.clone());
+        let registry = PeerRegistry::new(identity.public_key.clone(), config.name.clone());
 
         let node = Node {
             inner: Arc::new(Inner {
@@ -379,11 +383,16 @@ impl Node {
             Admission::Rejected(reason) => return Err(ConnError::Rejected(reason)),
             Admission::Superseded => {}
             Admission::Admitted { name_conflict } => {
-                if let Some(existing) = name_conflict {
+                if let Some(clash) = name_conflict {
+                    let (existing, impersonating_you) = match clash {
+                        NameClash::WithPeer { fingerprint } => (fingerprint, false),
+                        NameClash::WithYou => (self.fingerprint(), true),
+                    };
                     self.emit(Event::NameConflict {
                         name: peer.name.clone(),
                         existing,
                         incoming: peer.fingerprint.clone(),
+                        impersonating_you,
                     });
                 }
                 self.emit(Event::PeerJoined {

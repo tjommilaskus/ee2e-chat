@@ -39,6 +39,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = tokio::runtime::Runtime::new()?;
 
     let (events_tx, events_rx) = mpsc::unbounded_channel();
+    // Kept so startup problems can be reported through the same stream the UI
+    // reads. Printing them would be useless: cursive clears the screen the
+    // moment it starts, taking any earlier output with it.
+    let startup = events_tx.clone();
+
     let (node, bound) = runtime.block_on(Node::start(
         NodeConfig {
             name: args.name,
@@ -61,8 +66,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok::<_, String>(addr)
         });
 
-        if let Err(e) = dialled {
-            eprintln!("{e}");
+        match dialled {
+            Ok(addr) => {
+                let _ = startup.send(Event::Notice(format!("dialling {addr}")));
+            }
+            Err(e) => {
+                let _ = startup.send(Event::Warning(e));
+                let _ = startup.send(Event::Notice(
+                    "nobody else has to be running -- others can connect to you".to_string(),
+                ));
+            }
         }
     }
 
@@ -99,10 +112,18 @@ async fn plain(node: Node, bound: SocketAddr, mut events: mpsc::UnboundedReceive
             Event::PeerJoined { name, fingerprint } => println!("* {name} joined · {fingerprint}"),
             Event::PeerLeft { name, fingerprint } => println!("* {name} left · {fingerprint}"),
             Event::NameConflict {
-                name, existing, incoming,
+                name,
+                existing,
+                incoming,
+                impersonating_you,
             } => {
-                println!("! two peers are calling themselves {name}: {existing} and {incoming}");
-                println!("! check fingerprints before trusting either");
+                if impersonating_you {
+                    println!("! someone joined using YOUR name, {name}");
+                    println!("! you: {existing}  them: {incoming}");
+                } else {
+                    println!("! two peers are calling themselves {name}: {existing}, {incoming}");
+                    println!("! check fingerprints before trusting either");
+                }
             }
             Event::Notice(text) => println!("  {text}"),
             Event::Warning(text) => eprintln!("! {text}"),

@@ -22,8 +22,12 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 const MESSAGES: &str = "messages";
+const SCROLL: &str = "scroll";
 const INPUT: &str = "input";
 const HEADER: &str = "header";
+
+/// Lines moved per PageUp/PageDown.
+const PAGE: usize = 10;
 
 /// True colour, so the palette matches the intended look rather than whichever
 /// sixteen colours the terminal happens to define.
@@ -46,7 +50,8 @@ const PANEL: Color = Color::Rgb(0x14, 0x1B, 0x2A);
 /// growing and centres itself instead.
 const MAX_WIDTH: usize = 100;
 
-const HELP: &str = "ESC:quit | Enter:send | Commands: /help, /clear, /peers, /quit";
+const HELP: &str =
+    "ESC:quit | Enter:send | PgUp/PgDn:scroll | Commands: /help, /clear, /peers, /quit";
 
 pub fn theme() -> Theme {
     let mut theme = Theme {
@@ -92,7 +97,8 @@ pub fn build(siv: &mut Cursive, node: Node) {
         .child(
             Panel::new(
                 ScrollView::new(TextView::new("").with_name(MESSAGES))
-                    .scroll_strategy(ScrollStrategy::StickToBottom),
+                    .scroll_strategy(ScrollStrategy::StickToBottom)
+                    .with_name(SCROLL),
             )
             .title("Messages")
             .full_height(),
@@ -112,6 +118,15 @@ pub fn build(siv: &mut Cursive, node: Node) {
     siv.focus_name(INPUT).ok();
 
     siv.add_global_callback(cursive::event::Key::Esc, |siv| siv.quit());
+    // In raw mode Ctrl+C arrives as an ordinary key rather than a signal, so
+    // without this it would do nothing and the app would look wedged.
+    siv.add_global_callback(cursive::event::Event::CtrlChar('c'), |siv| siv.quit());
+
+    // The input holds focus, so these are global rather than handled by the
+    // scroll view itself. EditView ignores PageUp/PageDown, so nothing is
+    // being taken away from it.
+    siv.add_global_callback(cursive::event::Key::PageUp, |siv| scroll(siv, true));
+    siv.add_global_callback(cursive::event::Key::PageDown, |siv| scroll(siv, false));
 
     system(siv, format!("you are {name} · {}", node.fingerprint()));
     system(siv, "type /help for commands".to_string());
@@ -186,11 +201,19 @@ pub fn apply(siv: &mut Cursive, event: Event) {
             name,
             existing,
             incoming,
+            impersonating_you,
         } => {
-            alarm(siv, format!("two peers are both calling themselves {name}"));
-            alarm(siv, format!("  already here: {existing}"));
-            alarm(siv, format!("  just joined:  {incoming}"));
-            alarm(siv, "  compare fingerprints before trusting either".to_string());
+            if impersonating_you {
+                alarm(siv, format!("someone just joined using YOUR name, {name}"));
+                alarm(siv, format!("  you:  {existing}"));
+                alarm(siv, format!("  them: {incoming}"));
+                alarm(siv, "  anything they say will look like it came from you".to_string());
+            } else {
+                alarm(siv, format!("two peers are both calling themselves {name}"));
+                alarm(siv, format!("  already here: {existing}"));
+                alarm(siv, format!("  just joined:  {incoming}"));
+                alarm(siv, "  compare fingerprints before trusting either".to_string());
+            }
         }
 
         Event::Message {
@@ -200,6 +223,31 @@ pub fn apply(siv: &mut Cursive, event: Event) {
         Event::Notice(text) => system(siv, text),
         Event::Warning(text) => alarm(siv, text),
     }
+}
+
+/// Page the message log, and manage whether it keeps following new messages.
+///
+/// Scrolling up has to stop the log auto-following, or the next message would
+/// yank the reader straight back to the bottom. Reaching the bottom again
+/// restores it, so returning to live needs no separate key.
+fn scroll(siv: &mut Cursive, up: bool) {
+    siv.call_on_name(
+        SCROLL,
+        |view: &mut ScrollView<cursive::views::NamedView<TextView>>| {
+            let top = view.content_viewport().top();
+            let target = if up {
+                view.set_scroll_strategy(ScrollStrategy::KeepRow);
+                top.saturating_sub(PAGE)
+            } else {
+                top + PAGE
+            };
+            view.set_offset(cursive::Vec2::new(0, target));
+
+            if view.is_at_bottom() {
+                view.set_scroll_strategy(ScrollStrategy::StickToBottom);
+            }
+        },
+    );
 }
 
 fn append(siv: &mut Cursive, line: StyledString) {
@@ -263,29 +311,38 @@ fn run_command(siv: &mut Cursive, node: &Node, command: &str) {
         }
 
         "peers" => {
+            // Ours is listed too: verifying a fingerprint takes both sides, and
+            // the other person needs to hear yours read back.
+            let mut you = StyledString::styled("   ", GREEN);
+            you.append_styled(node.name(), GREEN);
+            you.append_styled(" (you) · ", DIM_GREEN);
+            you.append_styled(node.fingerprint(), CYAN);
+            append(siv, you);
+
             let peers = node.peers();
             if peers.is_empty() {
                 system(siv, "nobody else is connected".to_string());
-            } else {
-                system(siv, format!("{} connected", peers.len()));
-                for peer in peers {
-                    let mut line = StyledString::styled("   ", GREEN);
-                    line.append_styled(&peer.name, GREEN);
-                    line.append_styled(" · ", DIM_GREEN);
-                    line.append_styled(&peer.fingerprint, CYAN);
-                    append(siv, line);
-                }
-                system(
-                    siv,
-                    "read these aloud to check nobody is intercepting".to_string(),
-                );
+                return;
             }
+
+            for peer in peers {
+                let mut line = StyledString::styled("   ", GREEN);
+                line.append_styled(&peer.name, GREEN);
+                line.append_styled(" · ", DIM_GREEN);
+                line.append_styled(&peer.fingerprint, CYAN);
+                append(siv, line);
+            }
+            system(
+                siv,
+                "read these aloud to check nobody is intercepting".to_string(),
+            );
         }
 
         "help" | "" => {
             system(siv, "/peers  who is here, with key fingerprints".to_string());
             system(siv, "/clear  empty this window".to_string());
             system(siv, "/quit   leave".to_string());
+            system(siv, "PgUp/PgDn scrolls; reaching the bottom resumes following".to_string());
         }
 
         other => alarm(siv, format!("unknown command: /{other}")),
