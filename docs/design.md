@@ -96,10 +96,11 @@ key, the UI warns.
 
 Stated plainly rather than left implicit:
 
-- **Identities are ephemeral.** A new keypair is generated per run, so
-  fingerprints change between sessions. Verifying a fingerprint proves the
-  *current* connection is not intercepted; it cannot establish continuity with
-  yesterday's session. Persisting identity is a later stage.
+- **No record of who you have met.** The keypair persists across runs, so a
+  fingerprint now identifies the same person over time. Nothing remembers which
+  fingerprint went with which name previously, though, so a familiar name
+  arriving under a new key is not flagged. An SSH-style known-hosts file would
+  close this.
 - **No forward secrecy.** A pair's shared secret is derived from long-term
   keys, so compromising one later exposes past messages. Fixing this needs a
   ratchet, which is well beyond scope.

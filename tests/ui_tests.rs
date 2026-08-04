@@ -18,6 +18,7 @@ async fn node(name: &str) -> Node {
         NodeConfig {
             name: name.to_string(),
             listen: "127.0.0.1:0".parse().unwrap(),
+            identity: None,
         },
         tx,
     )

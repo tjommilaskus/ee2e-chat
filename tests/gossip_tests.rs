@@ -14,6 +14,7 @@ async fn start(name: &str) -> (Node, SocketAddr, UnboundedReceiver<Event>) {
         NodeConfig {
             name: name.to_string(),
             listen: "127.0.0.1:0".parse().unwrap(),
+            identity: None,
         },
         tx,
     )

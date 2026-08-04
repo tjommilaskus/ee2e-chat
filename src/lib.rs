@@ -1,4 +1,5 @@
 pub mod crypto;
+pub mod identity;
 pub mod messages;
 pub mod node;
 pub mod peers;

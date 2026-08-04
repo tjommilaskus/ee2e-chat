@@ -48,6 +48,23 @@ three connect directly to each other.
 `--plain` gives line-by-line output instead of the full interface, which is
 easier to pipe somewhere.
 
+## Your identity
+
+Your keypair is stored at `$XDG_CONFIG_HOME/ee2e-chat/identity` (usually
+`~/.config/ee2e-chat/identity`), created on first run and readable only by you.
+It is what keeps your fingerprint the same from one session to the next, so
+someone who verified it last week still recognises you today.
+
+- `--identity PATH` keeps it somewhere else, which is also how to run two
+  distinct identities on one machine.
+- `--ephemeral` uses a throwaway key instead. Your fingerprint will match no
+  previous session, so nobody can recognise you.
+
+If the file is unreadable or damaged the program stops rather than quietly
+generating a replacement: a changed fingerprint is exactly the signal that
+means *someone is impersonating them*, so a disk problem must never be able to
+imitate an attack. Delete the file to start over deliberately.
+
 ## Verifying who you are talking to
 
 Encryption alone does not tell you *whose* key you are encrypting to. On first
@@ -113,9 +130,10 @@ Stated plainly rather than left to be discovered.
   NATs cannot open a TCP connection, and fixing that needs STUN/TURN
   infrastructure — servers, which is the thing this design removes. Works on a
   LAN, over a VPN such as Tailscale, or with one peer port-forwarded.
-- **Identities are ephemeral.** A new keypair is generated per run, so
-  fingerprints change between sessions. Verifying one proves *this* connection
-  is not intercepted; it cannot establish continuity with yesterday.
+- **No record of who you have met.** Identities persist, but nothing remembers
+  which fingerprint belonged to which name last time, so a familiar name
+  appearing with a new key passes unremarked. Verification has to be repeated
+  by hand each time you care.
 - **No forward secrecy.** A pair's shared secret comes from long-term keys, so
   compromising one later exposes past messages.
 - **Metadata is not hidden.** Peers see who is present and when messages are
@@ -128,7 +146,7 @@ and the limitations above are the ones that are *known*.
 ## Development
 
 ```
-cargo test      # 87 tests
+cargo test      # 101 tests
 cargo clippy --all-targets
 ```
 

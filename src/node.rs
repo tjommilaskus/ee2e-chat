@@ -135,6 +135,10 @@ impl From<tokio_util::codec::LinesCodecError> for ConnError {
 pub struct NodeConfig {
     pub name: String,
     pub listen: SocketAddr,
+    /// The long-term keypair, normally loaded from disk. `None` generates a
+    /// throwaway one, which is right for tests and for a deliberately
+    /// unrecognisable session, but means the fingerprint changes every run.
+    pub identity: Option<Keypair>,
 }
 
 /// Registry and live connections under one lock, so there is no ordering to get
@@ -176,7 +180,7 @@ impl Node {
         let listener = TcpListener::bind(config.listen).await?;
         let bound = listener.local_addr()?;
 
-        let identity = crypto::generate_keypair();
+        let identity = config.identity.unwrap_or_else(crypto::generate_keypair);
         let registry = PeerRegistry::new(identity.public_key.clone(), config.name.clone());
 
         let node = Node {

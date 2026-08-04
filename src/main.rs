@@ -3,9 +3,11 @@
 // binary, so this file only ever `use`s them.
 
 use clap::Parser;
+use ee2e_chat::identity;
 use ee2e_chat::node::{Event, Node, NodeConfig};
 use ee2e_chat::ui;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tokio::net::lookup_host;
 use tokio::sync::mpsc;
 
@@ -25,16 +27,36 @@ struct Args {
     #[arg(long)]
     connect: Option<String>,
 
+    /// Where the long-term keypair is stored.
+    /// Defaults to $XDG_CONFIG_HOME/ee2e-chat/identity.
+    #[arg(long, value_name = "PATH")]
+    identity: Option<PathBuf>,
+
+    /// Use a throwaway keypair instead of the stored one. Your fingerprint will
+    /// differ from every previous session, so nobody can recognise you.
+    #[arg(long, conflicts_with = "identity")]
+    ephemeral: bool,
+
     /// Plain line-by-line output instead of the full interface. Useful when a
     /// full-screen UI would get in the way, such as piping a session to a file.
     #[arg(long)]
     plain: bool,
 }
 
+// Returning `Result` from `main` would render the error with `Debug`, turning
+// a multi-line message into one line of escape sequences. These are read by
+// people, so they are printed rather than returned.
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
+}
+
 // Not `#[tokio::main]`. Cursive's event loop blocks whichever thread it runs
 // on, so it takes the main thread and the runtime is built by hand to live
 // alongside it.
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let runtime = tokio::runtime::Runtime::new()?;
 
@@ -44,13 +66,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // moment it starts, taking any earlier output with it.
     let startup = events_tx.clone();
 
+    let (keypair, identity_notes) = resolve_identity(args.ephemeral, args.identity)?;
+
     let (node, bound) = runtime.block_on(Node::start(
         NodeConfig {
             name: args.name,
             listen: args.listen,
+            identity: keypair,
         },
         events_tx,
     ))?;
+
+    for note in identity_notes {
+        let _ = startup.send(note);
+    }
 
     if let Some(target) = args.connect {
         // Resolved rather than parsed, so a hostname works as well as an IP.
@@ -86,6 +115,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// Work out which keypair to run with, and what to tell the user about it.
+///
+/// A failure here stops the program rather than falling back to a fresh
+/// keypair. Silently running under a different identity would be the worst
+/// outcome available: everyone who had verified your fingerprint would see it
+/// change, which is exactly the signal that means "someone is impersonating
+/// them" -- so a routine disk problem would look identical to an attack.
+fn resolve_identity(
+    ephemeral: bool,
+    explicit: Option<PathBuf>,
+) -> Result<(Option<ee2e_chat::crypto::Keypair>, Vec<Event>), Box<dyn std::error::Error>> {
+    if ephemeral {
+        return Ok((
+            None,
+            vec![Event::Notice(
+                "using a throwaway identity; your fingerprint will not match earlier sessions"
+                    .to_string(),
+            )],
+        ));
+    }
+
+    let path = match explicit {
+        Some(path) => path,
+        None => identity::default_path()?,
+    };
+
+    let loaded = identity::load_or_create(&path).map_err(|e| {
+        format!("{e}\n\nFix the file, point --identity somewhere else, or run with --ephemeral.")
+    })?;
+
+    let mut notes: Vec<Event> = loaded.notes.into_iter().map(Event::Warning).collect();
+    notes.push(Event::Notice(if loaded.created {
+        format!("new identity saved to {}", path.display())
+    } else {
+        format!("identity loaded from {}", path.display())
+    }));
+
+    Ok((Some(loaded.keypair), notes))
 }
 
 /// Line-by-line mode: the same event stream, printed instead of drawn.
