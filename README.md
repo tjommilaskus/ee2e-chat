@@ -25,7 +25,8 @@ cargo build --release && ./target/release/ee2e-chat
 
 ## Running it
 
-Start it with no arguments and it asks who you are and who to connect to:
+Start it with no arguments and it asks who you are and who to connect to. Each
+field is explained beneath it; PgUp/PgDn scrolls if your terminal is short.
 
 ```
 ┌────────────────┤ ⌐ TIO CHAT ¬ ├────────────────┐
@@ -62,6 +63,7 @@ without `--name`, say — prefills the setup screen rather than being ignored.
 | `Enter` | send |
 | `PgUp` / `PgDn` | scroll; reaching the bottom resumes following |
 | `Esc` / `Ctrl+C` | quit |
+| `/room` | show the room code and copy it |
 | `/peers` | who is here, with fingerprints |
 | `/clear` | empty the window |
 | `/help` `/quit` | |
@@ -82,6 +84,11 @@ One is created the first time you run the program:
   room TIO-TEPJ-QYH0-DBKA-JPXR
   share that code with the people you want in it
 ```
+
+The setup screen shows it with a **Copy room code** button, and `/room` copies
+it once you are in the chat. Copying needs a clipboard tool — `wl-clipboard` on
+Wayland, `xclip` or `xsel` on X11 — and if none is installed the code is shown
+on screen to read out instead.
 
 Send it to your friends however you like. They pass it once:
 
@@ -169,6 +176,7 @@ Gossip is used only to discover peers, never to route messages.
 | `protocol.rs` | wire frames and newline framing |
 | `peers.rs` | peer registry, name clashes, dial collisions |
 | `room.rs` | room codes, admission proofs |
+| `clipboard.rs` | handing text to the system clipboard tool |
 | `identity.rs` | reading and writing the stored keypair |
 | `secretfile.rs` | owner-only files for the key and the room code |
 | `node.rs` | listening, dialling, handshakes, gossip |
@@ -220,7 +228,7 @@ and the limitations above are the ones that are *known*.
 ## Development
 
 ```
-cargo test      # 132 tests
+cargo test      # 135 tests
 cargo clippy --all-targets
 ```
 

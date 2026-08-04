@@ -10,6 +10,7 @@
 //! View construction and event rendering are deliberately separate from `run`,
 //! so both can be exercised against cursive's dummy backend in tests.
 
+use crate::clipboard;
 use crate::crypto::Keypair;
 use crate::node::{Event, Node, NodeConfig};
 use crate::room::RoomCode;
@@ -32,6 +33,7 @@ const F_NAME: &str = "f_name";
 const F_LISTEN: &str = "f_listen";
 const F_CONNECT: &str = "f_connect";
 const F_ROOM: &str = "f_room";
+const SETUP_SCROLL: &str = "setup_scroll";
 const F_ERROR: &str = "f_error";
 
 pub const DEFAULT_LISTEN: &str = "0.0.0.0:9999";
@@ -61,7 +63,7 @@ const PANEL: Color = Color::Rgb(0x14, 0x1B, 0x2A);
 const MAX_WIDTH: usize = 100;
 
 const HELP: &str =
-    "ESC:quit | Enter:send | PgUp/PgDn:scroll | Commands: /help, /clear, /peers, /quit";
+    "ESC:quit | Enter:send | PgUp/PgDn:scroll | /help /room /peers /clear /quit";
 
 pub fn theme() -> Theme {
     let mut theme = Theme {
@@ -389,40 +391,127 @@ pub fn run(launcher: Launcher, mut events: UnboundedReceiver<Event>, startup: St
     siv.run();
 }
 
-fn setup_screen(siv: &mut Cursive, launcher: Launcher, defaults: Startup) {
-    let field = |name: &'static str, content: &str| {
-        EditView::new()
-            .content(content)
-            .style(ColorStyle::new(BACKDROP, AMBER))
-            .with_name(name)
-            .fixed_width(46)
-    };
+/// One field, and the paragraph explaining it.
+///
+/// Kept together so the explanation cannot drift away from the thing it
+/// explains, and so a reader meets both at once rather than having to hold a
+/// label in mind while scrolling to find its description.
+struct Field {
+    name: &'static str,
+    label: &'static str,
+    help: &'static str,
+}
 
-    // Prefilled from the command line, so `--listen` and `--connect` are still
-    // worth passing even when the name is left to the form.
-    let form = LinearLayout::vertical()
-        .child(TextView::new("Your name"))
-        .child(field(F_NAME, &defaults.name))
-        .child(DummyView)
-        .child(TextView::new("Listen on"))
-        .child(field(F_LISTEN, &defaults.listen))
-        .child(DummyView)
-        .child(TextView::new("Connect to a peer  (blank to wait for others)"))
-        .child(field(F_CONNECT, defaults.connect.as_deref().unwrap_or("")))
-        .child(DummyView)
-        .child(TextView::new("Room code  (yours, or one a friend sent you)"))
-        .child(field(F_ROOM, &defaults.room))
+const FIELDS: &[Field] = &[
+    Field {
+        name: F_NAME,
+        label: "Your name",
+        help: "What everyone else sees next to your messages. Anyone can choose \
+               any name, including yours, so it proves nothing on its own -- the \
+               fingerprint underneath it is what actually identifies you.",
+    },
+    Field {
+        name: F_LISTEN,
+        label: "Listen on",
+        help: "The address on this machine that others connect to. 0.0.0.0 \
+               accepts on every network you are attached to, which is usually \
+               what you want. Change the port if something else already has 9999.",
+    },
+    Field {
+        name: F_CONNECT,
+        label: "Connect to a peer",
+        help: "The address of somebody already in the room, as host:port. Leave \
+               it blank if you are the first one here -- the others can connect \
+               to you instead. You only ever need one address: everybody else in \
+               the room is found automatically from there.",
+    },
+    Field {
+        name: F_ROOM,
+        label: "Room code",
+        help: "Only people holding this code can join. Yours is already filled \
+               in, so copy it and send it to the people you want in. To join \
+               somebody else's room instead, replace it with the code they sent \
+               you.",
+    },
+];
+
+fn setup_screen(siv: &mut Cursive, launcher: Launcher, defaults: Startup) {
+    let contents = [
+        defaults.name.clone(),
+        defaults.listen.clone(),
+        defaults.connect.clone().unwrap_or_default(),
+        defaults.room.clone(),
+    ];
+
+    let mut form = LinearLayout::vertical();
+    for (field, content) in FIELDS.iter().zip(contents) {
+        form = form
+            .child(TextView::new(StyledString::styled(field.label, CYAN)))
+            .child(
+                EditView::new()
+                    .content(content)
+                    .style(ColorStyle::new(BACKDROP, AMBER))
+                    .with_name(field.name)
+                    .fixed_width(46),
+            )
+            .child(TextView::new(StyledString::styled(field.help, DIM_GREEN)))
+            .child(DummyView);
+    }
+
+    form = form.child(TextView::new(StyledString::styled(
+        "PgUp/PgDn scrolls this. Everything here can also be given on the \
+         command line; run with --help to see how. Esc quits.",
+        DIM_GREEN,
+    )));
+
+    let copier = launcher.clone();
+
+    // The status line sits outside the scroll region. Inside it, a message
+    // about a button that was just pressed could land below the fold, leaving
+    // the button looking like it did nothing at all.
+    let body = LinearLayout::vertical()
+        .child(
+            // Scrolled, because the explanations do not fit a short terminal and
+            // silently cutting them off would be worse than making them scroll.
+            ScrollView::new(form)
+                .scroll_strategy(ScrollStrategy::StickToTop)
+                .with_name(SETUP_SCROLL)
+                .max_height(22),
+        )
         .child(DummyView)
         .child(TextView::new(StyledString::styled("", RED)).with_name(F_ERROR));
 
     siv.add_layer(
-        Dialog::around(form)
+        Dialog::around(body)
             .title("⌐ TIO CHAT ¬")
             .button("Connect", move |siv| connect_pressed(siv, &launcher))
+            .button("Copy room code", move |siv| copy_room(siv, &copier))
             .button("Quit", |siv| siv.quit()),
     );
 
     siv.focus_name(F_NAME).ok();
+}
+
+/// Put the room code on the clipboard, so it can be pasted to a friend.
+fn copy_room(siv: &mut Cursive, launcher: &Launcher) {
+    // Whatever is in the field, not the launcher's own code -- if it has been
+    // edited to join someone else's room, that is the one worth copying.
+    let typed = field_value(siv, F_ROOM);
+    let code = if typed.trim().is_empty() {
+        launcher.room_display()
+    } else {
+        typed.trim().to_string()
+    };
+
+    let (message, colour) = match clipboard::copy(&code) {
+        Ok(tool) => (format!("copied {code} to the clipboard, via {tool}"), CYAN),
+        // Still shown, so it can be read off the screen and typed by hand.
+        Err(e) => (format!("{e}\nyour code is {code}"), RED),
+    };
+
+    siv.call_on_name(F_ERROR, |view: &mut TextView| {
+        view.set_content(StyledString::styled(message, colour));
+    });
 }
 
 fn field_value(siv: &mut Cursive, name: &str) -> String {
@@ -518,23 +607,41 @@ pub fn apply(siv: &mut Cursive, event: Event) {
 /// yank the reader straight back to the bottom. Reaching the bottom again
 /// restores it, so returning to live needs no separate key.
 fn scroll(siv: &mut Cursive, up: bool) {
-    siv.call_on_name(
-        SCROLL,
-        |view: &mut ScrollView<cursive::views::NamedView<TextView>>| {
-            let top = view.content_viewport().top();
-            let target = if up {
-                view.set_scroll_strategy(ScrollStrategy::KeepRow);
-                top.saturating_sub(PAGE)
-            } else {
-                top + PAGE
-            };
-            view.set_offset(cursive::Vec2::new(0, target));
+    let handled = siv
+        .call_on_name(
+            SCROLL,
+            |view: &mut ScrollView<cursive::views::NamedView<TextView>>| {
+                let top = view.content_viewport().top();
+                let target = if up {
+                    view.set_scroll_strategy(ScrollStrategy::KeepRow);
+                    top.saturating_sub(PAGE)
+                } else {
+                    top + PAGE
+                };
+                view.set_offset(cursive::Vec2::new(0, target));
 
-            if view.is_at_bottom() {
-                view.set_scroll_strategy(ScrollStrategy::StickToBottom);
-            }
-        },
-    );
+                if view.is_at_bottom() {
+                    view.set_scroll_strategy(ScrollStrategy::StickToBottom);
+                }
+            },
+        )
+        .is_some();
+
+    if handled {
+        return;
+    }
+
+    // The setup screen scrolls too, since its explanations are longer than a
+    // short terminal. Only one of the two exists at a time.
+    siv.call_on_name(SETUP_SCROLL, |view: &mut ScrollView<LinearLayout>| {
+        let top = view.content_viewport().top();
+        let target = if up {
+            top.saturating_sub(PAGE)
+        } else {
+            top + PAGE
+        };
+        view.set_offset(cursive::Vec2::new(0, target));
+    });
 }
 
 fn append(siv: &mut Cursive, line: StyledString) {
@@ -625,7 +732,25 @@ fn run_command(siv: &mut Cursive, node: &Node, command: &str) {
             );
         }
 
+        "room" => {
+            let code = node.room_display();
+            match clipboard::copy(&code) {
+                Ok(tool) => {
+                    system(siv, format!("room {code}"));
+                    system(siv, format!("copied to the clipboard via {tool}"));
+                }
+                // Still shown, so it can be read out even with no tool to copy
+                // it with.
+                Err(e) => {
+                    system(siv, format!("room {code}"));
+                    alarm(siv, e.to_string());
+                }
+            }
+            system(siv, "anyone with that code can join".to_string());
+        }
+
         "help" | "" => {
+            system(siv, "/room   show the room code and copy it".to_string());
             system(siv, "/peers  who is here, with key fingerprints".to_string());
             system(siv, "/clear  empty this window".to_string());
             system(siv, "/quit   leave".to_string());

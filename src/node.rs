@@ -268,6 +268,12 @@ impl Node {
         &self.inner.identity.public_key
     }
 
+    /// The room code, for showing and copying. Held rather than hidden because
+    /// sharing it is how anyone else gets in.
+    pub fn room_display(&self) -> String {
+        self.inner.room.display()
+    }
+
     pub fn fingerprint(&self) -> String {
         crypto::fingerprint(&self.inner.identity.public_key)
     }

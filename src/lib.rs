@@ -1,3 +1,4 @@
+pub mod clipboard;
 pub mod crypto;
 pub mod identity;
 pub mod messages;
