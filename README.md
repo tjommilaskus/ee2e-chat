@@ -91,6 +91,7 @@ explains every field as you go.
 |---|---|
 | `Enter` | send |
 | `PgUp` / `PgDn` | scroll back through the log |
+| `Ctrl+E` | jump to the newest message and follow it again |
 | `Esc` / `Ctrl+C` | quit |
 | `/room` | show the room code and copy it |
 | `/peers` | who is here, with fingerprints |

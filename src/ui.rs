@@ -63,7 +63,7 @@ const PANEL: Color = Color::Rgb(0x14, 0x1B, 0x2A);
 const MAX_WIDTH: usize = 100;
 
 const HELP: &str =
-    "ESC:quit | Enter:send | PgUp/PgDn:scroll | /help /room /peers /clear /quit";
+    "ESC:quit | Enter:send | PgUp/PgDn:scroll | ^E:latest | /help /room /peers /clear /quit";
 
 pub fn theme() -> Theme {
     let mut theme = Theme {
@@ -324,18 +324,7 @@ pub fn run(launcher: Launcher, mut events: UnboundedReceiver<Event>, startup: St
     let mut siv = cursive::default();
     prepare(&mut siv);
 
-    // Registered once here rather than in `build`, so they work on the setup
-    // screen too -- otherwise there would be no way out of it but the mouse.
-    siv.add_global_callback(cursive::event::Key::Esc, |siv| siv.quit());
-    // In raw mode Ctrl+C arrives as an ordinary key rather than a signal, so
-    // without this it would do nothing and the app would look wedged.
-    siv.add_global_callback(cursive::event::Event::CtrlChar('c'), |siv| siv.quit());
-
-    // The message input holds focus once connected, so these are global rather
-    // than handled by the scroll view. EditView ignores both, and before the
-    // chat exists they find no view and quietly do nothing.
-    siv.add_global_callback(cursive::event::Key::PageUp, |siv| scroll(siv, true));
-    siv.add_global_callback(cursive::event::Key::PageDown, |siv| scroll(siv, false));
+    bind_keys(&mut siv);
 
     // Both tasks below end on their own once cursive stops, because the sink
     // send fails as soon as the event loop is gone.
@@ -389,6 +378,27 @@ pub fn run(launcher: Launcher, mut events: UnboundedReceiver<Event>, startup: St
     }
 
     siv.run();
+}
+
+/// The keys that work everywhere, whichever screen is up.
+///
+/// Registered here rather than in `build`, so they work on the setup screen too
+/// -- otherwise there would be no way out of it but the mouse. Separate from
+/// `run` so tests can drive them without a backend.
+pub fn bind_keys(siv: &mut Cursive) {
+    siv.add_global_callback(cursive::event::Key::Esc, |siv| siv.quit());
+    // In raw mode Ctrl+C arrives as an ordinary key rather than a signal, so
+    // without this it would do nothing and the app would look wedged.
+    siv.add_global_callback(cursive::event::Event::CtrlChar('c'), |siv| siv.quit());
+
+    // The message input holds focus once connected, so these are global rather
+    // than handled by the scroll view. EditView ignores them all, and before the
+    // chat exists they find no view and quietly do nothing.
+    siv.add_global_callback(cursive::event::Key::PageUp, |siv| scroll(siv, true));
+    siv.add_global_callback(cursive::event::Key::PageDown, |siv| scroll(siv, false));
+    // Ctrl+E rather than End, which the message field uses to move the cursor
+    // to the end of what you have typed.
+    siv.add_global_callback(cursive::event::Event::CtrlChar('e'), follow);
 }
 
 /// One field, and the paragraph explaining it.
@@ -644,6 +654,25 @@ fn scroll(siv: &mut Cursive, up: bool) {
     });
 }
 
+/// Jump to the newest message and start following again.
+///
+/// Paging up deliberately stops the log following, so a reader is not dragged
+/// away from what they are reading. Coming back the other way means paging down
+/// until the bottom happens to be reached, which is a race that cannot be won
+/// while messages are still arriving -- and one PageUp from near the top lands
+/// at the very top, leaving the log stuck there for good. So there is one key
+/// that returns to live directly, rather than by arriving at it.
+fn follow(siv: &mut Cursive) {
+    siv.call_on_name(
+        SCROLL,
+        |view: &mut ScrollView<cursive::views::NamedView<TextView>>| {
+            // Setting the strategy also applies it, so this both jumps to the
+            // bottom and resumes following from then on.
+            view.set_scroll_strategy(ScrollStrategy::StickToBottom);
+        },
+    );
+}
+
 fn append(siv: &mut Cursive, line: StyledString) {
     siv.call_on_name(MESSAGES, |view: &mut TextView| {
         view.append(line);
@@ -685,6 +714,12 @@ fn submit(siv: &mut Cursive, node: &Node, text: &str) {
     if let Some(callback) = siv.call_on_name(INPUT, |view: &mut EditView| view.set_content("")) {
         callback(siv);
     }
+
+    // Anyone pressing Enter has stopped reading history, and would otherwise be
+    // sending into a log they cannot see. Done before the empty check as well,
+    // so a bare Enter is a second way back to live for anyone who has not found
+    // Ctrl+E.
+    follow(siv);
 
     if text.is_empty() {
         return;
@@ -754,7 +789,11 @@ fn run_command(siv: &mut Cursive, node: &Node, command: &str) {
             system(siv, "/peers  who is here, with key fingerprints".to_string());
             system(siv, "/clear  empty this window".to_string());
             system(siv, "/quit   leave".to_string());
-            system(siv, "PgUp/PgDn scrolls; reaching the bottom resumes following".to_string());
+            system(siv, "PgUp/PgDn scrolls back through the log".to_string());
+            system(
+                siv,
+                "Ctrl+E jumps to the newest message and follows it again".to_string(),
+            );
         }
 
         other => alarm(siv, format!("unknown command: /{other}")),

@@ -4,11 +4,53 @@
 //! prone to -- a view looked up by a name that does not exist, which silently
 //! does nothing rather than failing loudly.
 
-use cursive::views::TextView;
-use cursive::Cursive;
+use cursive::view::View;
+use cursive::views::{NamedView, ScrollView, TextView};
+use cursive::{Cursive, Vec2};
 use ee2e_chat::room::RoomCode;
 use ee2e_chat::node::{Event, Node, NodeConfig};
 use ee2e_chat::ui;
+
+/// The message log: a scroll region wrapping the named text view.
+type Log = ScrollView<NamedView<TextView>>;
+
+/// Cursive applies a scroll strategy during layout, so nothing about following
+/// can be observed until the tree has been laid out. This is what its own event
+/// loop does on every refresh.
+fn relayout(siv: &mut Cursive) {
+    siv.screen_mut().layout(Vec2::new(100, 40));
+}
+
+/// Whether the log is showing the newest line.
+fn at_bottom(siv: &mut Cursive) -> bool {
+    siv.call_on_name("scroll", |view: &mut Log| view.is_at_bottom())
+        .expect("the scroll view should exist")
+}
+
+fn viewport_top(siv: &mut Cursive) -> usize {
+    siv.call_on_name("scroll", |view: &mut Log| view.content_viewport().top())
+        .expect("the scroll view should exist")
+}
+
+/// Enough traffic to overflow the log several times over.
+fn flood(siv: &mut Cursive, range: std::ops::RangeInclusive<usize>) {
+    for n in range {
+        ui::apply(
+            siv,
+            Event::Message {
+                from: "bob".to_string(),
+                fingerprint: "AAAA-BBBB-CCCC-DDDD".to_string(),
+                content: format!("message {n}"),
+            },
+        );
+    }
+    relayout(siv);
+}
+
+fn press(siv: &mut Cursive, event: cursive::event::Event) {
+    siv.on_event(event);
+    relayout(siv);
+}
 
 /// Every node in a test shares one room, since a node only talks to peers
 /// holding the same code. Rejection of a *different* code is covered by its own
@@ -221,6 +263,103 @@ async fn test_impersonation_of_you_is_called_out_explicitly() {
     assert!(text.contains("YOUR name"), "got: {text}");
     assert!(text.contains("1111-1111-1111-1111"), "got: {text}");
     assert!(text.contains("2222-2222-2222-2222"), "got: {text}");
+}
+
+/// The whole point of the log: you should not have to touch anything to see
+/// what was just said.
+#[tokio::test]
+async fn test_the_log_follows_new_messages() {
+    let mut siv = ui_for("alice").await;
+    ui::bind_keys(&mut siv);
+
+    flood(&mut siv, 1..=40);
+
+    assert!(
+        at_bottom(&mut siv),
+        "the newest message should be on screen without scrolling"
+    );
+}
+
+/// Paging up is how you read back through history, so new arrivals must not
+/// yank you away from what you are reading.
+#[tokio::test]
+async fn test_paging_up_stops_the_log_following() {
+    let mut siv = ui_for("alice").await;
+    ui::bind_keys(&mut siv);
+    flood(&mut siv, 1..=40);
+
+    press(&mut siv, cursive::event::Key::PageUp.into());
+    let held = viewport_top(&mut siv);
+
+    flood(&mut siv, 41..=50);
+
+    assert_eq!(
+        viewport_top(&mut siv),
+        held,
+        "messages arriving should not move a reader who has scrolled up"
+    );
+}
+
+/// Regression: a single PageUp used to strand the log for good. It lands at the
+/// top of the content, which is not the bottom, so following was switched off
+/// and the only way back was paging down as far as the content went -- a race
+/// that cannot be won while messages are still arriving.
+#[tokio::test]
+async fn test_returning_to_the_newest_message_resumes_following() {
+    let mut siv = ui_for("alice").await;
+    ui::bind_keys(&mut siv);
+    flood(&mut siv, 1..=40);
+
+    // Far enough up that the bottom is several pages away.
+    for _ in 0..5 {
+        press(&mut siv, cursive::event::Key::PageUp.into());
+    }
+    assert!(!at_bottom(&mut siv), "the test should have scrolled away");
+
+    press(&mut siv, cursive::event::Event::CtrlChar('e'));
+    assert!(at_bottom(&mut siv), "Ctrl+E should jump back to the newest message");
+
+    // And it has to keep following from then on, not just jump the once.
+    flood(&mut siv, 41..=60);
+    assert!(
+        at_bottom(&mut siv),
+        "following should have resumed, not just jumped once"
+    );
+}
+
+/// Someone who joins in is no longer reading history, and would otherwise send
+/// a message into a log they cannot see.
+#[tokio::test]
+async fn test_sending_a_message_resumes_following() {
+    use cursive::event::{Event as Key_, EventResult, Key};
+    use cursive::views::EditView;
+
+    let mut siv = ui_for("alice").await;
+    ui::bind_keys(&mut siv);
+    flood(&mut siv, 1..=40);
+
+    for _ in 0..5 {
+        press(&mut siv, cursive::event::Key::PageUp.into());
+    }
+    assert!(!at_bottom(&mut siv), "the test should have scrolled away");
+
+    if let Some(cb) = siv.call_on_name("input", |view: &mut EditView| view.set_content("hello")) {
+        cb(&mut siv);
+    }
+    let result = siv
+        .call_on_name("input", |view: &mut EditView| {
+            view.on_event(Key_::Key(Key::Enter))
+        })
+        .expect("input view should exist");
+    if let EventResult::Consumed(Some(cb)) = result {
+        cb(&mut siv);
+    }
+    relayout(&mut siv);
+
+    assert!(
+        at_bottom(&mut siv),
+        "sending a message should return you to the newest message"
+    );
 }
 
 #[tokio::test]
