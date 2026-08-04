@@ -23,12 +23,15 @@ never been attempted.
 ## Installing
 
 ```
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/tjommilaskus/ee2e-chat/main/install.sh | sh
 ```
 
-Builds from source and installs to `~/.local/bin`, so it never needs root.
-`--prefix DIR` puts it elsewhere and `--uninstall` removes it again. Rust is
-the only requirement, and the script says how to get it if it is missing.
+Or from a clone, `./install.sh`.
+
+Either way it builds from source and installs to `~/.local/bin`, so it never
+needs root. `--prefix DIR` puts it elsewhere and `--uninstall` removes it
+again. Rust is the only requirement, and the script says how to get it if it is
+missing.
 
 To build without installing anything:
 

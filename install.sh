@@ -11,7 +11,8 @@ set -eu
 
 BIN=ee2e-chat
 PREFIX="${PREFIX:-$HOME/.local}"
-REPO="${EE2E_REPO:-}"
+# Overridable so a fork can be installed without editing this file.
+REPO="${EE2E_REPO:-https://github.com/tjommilaskus/ee2e-chat.git}"
 UNINSTALL=0
 
 # Colour only when writing to a terminal, so piping to a file stays readable.
@@ -82,9 +83,9 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/Cargo.toml" ]; then
     SRC="$SCRIPT_DIR"
     step "building from $SRC"
 else
-    # Piped from curl, so there is no checkout to build.
+    # Piped from curl, so there is no checkout to build; fetch one.
     [ -n "$REPO" ] || die "run this from a checkout, or set EE2E_REPO to a git URL"
-    command -v git >/dev/null 2>&1 || die "git is required to clone $REPO"
+    command -v git >/dev/null 2>&1 || die "git is needed to fetch the source -- install it, or clone the repository yourself and run this script from inside it"
     CLEANUP=$(mktemp -d)
     SRC="$CLEANUP/src"
     step "cloning $REPO"
