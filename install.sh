@@ -1,8 +1,9 @@
 #!/bin/sh
-# Build and install TIO CHAT. The installed command is `chat`.
+# Build and install TIO CHAT. The installed command is `e2ee` by default.
 #
 #   ./install.sh                 install to ~/.local/bin
 #   ./install.sh --with-rust     install Rust too, if it is missing
+#   ./install.sh --name mychat   install it under a different command name
 #   ./install.sh --prefix /usr   install to /usr/bin (needs write access)
 #   ./install.sh --uninstall     remove it again
 #
@@ -10,7 +11,11 @@
 
 set -eu
 
-BIN=chat
+BUILT_BIN=e2ee
+# What the command ends up called. The compiled artefact is always e2ee; this
+# only decides the name it is installed under, so anyone whose system already
+# has an `e2ee` can pick something else.
+BIN="${E2EE_NAME:-$BUILT_BIN}"
 PREFIX="${PREFIX:-$HOME/.local}"
 # Overridable so a fork can be installed without editing this file.
 REPO="${EE2E_REPO:-https://github.com/tjommilaskus/ee2e-chat.git}"
@@ -36,12 +41,14 @@ usage() {
 Usage: install.sh [options]
 
   --prefix DIR   install under DIR (default: \$HOME/.local)
+  --name NAME    install the command as NAME (default: e2ee)
   --with-rust    install Rust via rustup if missing, without asking first
   --uninstall    remove an installed copy
   -h, --help     this message
 
 Environment:
   PREFIX         same as --prefix
+  E2EE_NAME      same as --name
   EE2E_REPO      git URL to clone when run outside a checkout
 
 Rust is the only requirement. If it is missing you are offered rustup, which
@@ -53,6 +60,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --prefix) [ $# -ge 2 ] || die "--prefix needs a directory"; PREFIX="$2"; shift 2 ;;
         --prefix=*) PREFIX="${1#*=}"; shift ;;
+        --name) [ $# -ge 2 ] || die "--name needs a name"; BIN="$2"; shift 2 ;;
+        --name=*) BIN="${1#*=}"; shift ;;
         --with-rust|-y) WITH_RUST=1; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -197,7 +206,7 @@ fi
 step "compiling (this takes a minute the first time)"
 ( cd "$SRC" && cargo build --release --quiet ) || die "the build failed"
 
-BUILT="$SRC/target/release/$BIN"
+BUILT="$SRC/target/release/$BUILT_BIN"
 [ -x "$BUILT" ] || die "expected a binary at $BUILT but found none"
 
 # --- install -----------------------------------------------------------------

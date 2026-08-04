@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 #[derive(Parser)]
 #[command(
-    name = "chat",
+    name = "e2ee",
     version,
     about = "End-to-end encrypted peer-to-peer terminal chat"
 )]

@@ -3,10 +3,10 @@ name = "ee2e-chat"
 version = "0.1.0"
 edition = "2024"
 
-# The command is `chat`. The package keeps its old name so the library crate
+# The command is `e2ee`. The package keeps its old name so the library crate
 # stays `ee2e_chat` and every `use` in the tests goes on working.
 [[bin]]
-name = "chat"
+name = "e2ee"
 path = "src/main.rs"
 
 [dependencies]

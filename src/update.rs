@@ -37,11 +37,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // afterwards would be this same unchanged copy answering.
     let before = modified(&exe);
 
+    let name = exe
+        .file_name()
+        .ok_or_else(|| format!("could not read a command name from {}", exe.display()))?;
+
     let workspace = TempDir::new()?;
     let source = workspace.path().join("src");
 
     clone(&source)?;
-    install(&source, &prefix)?;
+    install(&source, &prefix, name)?;
 
     println!();
     if modified(&exe) == before {
@@ -114,18 +118,23 @@ fn clone(into: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn install(source: &Path, prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn install(source: &Path, prefix: &Path, name: &OsStr) -> Result<(), Box<dyn std::error::Error>> {
     let script = source.join("install.sh");
     if !script.is_file() {
         return Err("the repository has no install.sh; update it by hand".into());
     }
 
-    // Arguments rather than a shell string, so a prefix containing spaces or
-    // quotes cannot turn into something else on the way.
+    // Arguments rather than a shell string, so a prefix or name containing
+    // spaces or quotes cannot turn into something else on the way.
     let status = Command::new("sh")
         .arg(&script)
         .arg("--prefix")
         .arg(prefix)
+        // Whatever this copy is called, so a renamed install stays renamed.
+        // Without it the installer would use its default and leave a second
+        // binary behind rather than replacing this one.
+        .arg("--name")
+        .arg(name)
         .status()
         .map_err(|e| format!("could not run the installer: {e}"))?;
 

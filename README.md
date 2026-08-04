@@ -26,11 +26,19 @@ never been attempted.
 curl -fsSL https://raw.githubusercontent.com/tjommilaskus/ee2e-chat/main/install.sh | sh
 ```
 
-Or from a clone, `./install.sh`. The installed command is **`chat`**.
+Or from a clone, `./install.sh`. The installed command is **`e2ee`**.
 
-That name is not unique — the `ppp` package ships a `/usr/bin/chat` used by
-dialup scripts. The installer checks and tells you which one your shell will
-reach, so nothing goes quiet either way.
+If that name is taken on your machine, or you would rather type something else:
+
+```
+./install.sh --name mychat
+```
+
+The command name is the filename on disk, so this is decided when installing
+rather than in a config file the program reads. `mychat update` keeps working —
+it passes its own name through, so a renamed install stays renamed instead of
+quietly growing a second copy. The installer also checks whether the name is
+already on your PATH and says which one your shell will reach.
 
 Either way it builds from source and installs to `~/.local/bin`, so it never
 needs root. `--prefix DIR` puts it elsewhere, `--uninstall` removes it again.
@@ -54,7 +62,7 @@ Copying the room code also wants a clipboard tool — `wl-clipboard` on Wayland,
 To build without installing anything:
 
 ```
-cargo build --release && ./target/release/chat
+cargo build --release && ./target/release/e2ee
 ```
 
 ## Running it
@@ -89,9 +97,9 @@ Everything on that screen can be passed on the command line instead, which
 skips it entirely:
 
 ```
-chat --name alice --listen 0.0.0.0:9001
-chat --name bob   --listen 0.0.0.0:9002 --connect 192.168.1.42:9001
-chat --name carol --listen 0.0.0.0:9003 --connect 192.168.1.43:9002
+e2ee --name alice --listen 0.0.0.0:9001
+e2ee --name bob   --listen 0.0.0.0:9002 --connect 192.168.1.42:9001
+e2ee --name carol --listen 0.0.0.0:9003 --connect 192.168.1.43:9002
 ```
 
 Carol only needs to know *one* address. Gossip introduces her to alice, and the
@@ -115,7 +123,7 @@ easier to pipe somewhere. It has no setup screen to ask on, so it needs
 ### Updating
 
 ```
-chat update
+e2ee update
 ```
 
 Fetches the current version and installs it over the one you are running. It
@@ -144,7 +152,7 @@ none is found the code is shown on screen to read out instead.
 Send it to your friends however you like. They pass it once:
 
 ```
-chat --room TIO-TEPJ-QYH0-DBKA-JPXR --connect 192.168.1.42:9001
+e2ee --room TIO-TEPJ-QYH0-DBKA-JPXR --connect 192.168.1.42:9001
 ```
 
 and it is remembered from then on. It can also be typed into the setup screen,
