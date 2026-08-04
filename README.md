@@ -2,7 +2,7 @@
 
 **Encrypted chat with nobody in the middle. No server, no account, no cloud.**
 
-![Two terminals connecting and exchanging encrypted messages](docs/demo.gif)
+![Two terminals connecting and exchanging encrypted messages](assets/demo.gif)
 
 *Two machines, no server in between. Bob joins with a room code, and each side
 shows the other's key fingerprint so they can check nobody is in the middle.*
@@ -335,5 +335,4 @@ cargo clippy --all-targets
 
 The tests are worth a look: they cover impersonation, replayed and reflected
 handshakes, tampered ciphertext, hostile gossip, and simultaneous dials — not
-just that a message arrives. `docs/design.md` covers the architecture and why
-it is peer-to-peer; `docs/plan.md` tracks the stages it was built in.
+just that a message arrives.
