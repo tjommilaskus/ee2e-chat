@@ -79,6 +79,36 @@ async fn node(name: &str) -> Node {
     node
 }
 
+/// Whether `text` holds a timestamp of `parts` colon-separated pairs -- two for
+/// `HH:MM`, three for `HH:MM:SS`.
+///
+/// Matched by shape rather than by reading the format string, so the assertion
+/// holds however the header comes to be built. Counting colons would not work:
+/// the header says "User:" as well.
+fn shows_time(text: &str, parts: usize) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let width = parts * 3 - 1;
+
+    chars.windows(width).any(|window| {
+        window.iter().enumerate().all(|(i, c)| {
+            // Every third character is a separator; the rest are digits.
+            if i % 3 == 2 {
+                *c == ':'
+            } else {
+                c.is_ascii_digit()
+            }
+        })
+    })
+}
+
+/// The text currently in the header.
+fn header(siv: &mut Cursive) -> String {
+    siv.call_on_name("header", |view: &mut TextView| {
+        view.get_content().source().to_string()
+    })
+    .expect("the header view should exist")
+}
+
 /// The text currently in the message log.
 fn transcript(siv: &mut Cursive) -> String {
     siv.call_on_name("messages", |view: &mut TextView| {
@@ -91,6 +121,34 @@ async fn ui_for(name: &str) -> Cursive {
     let mut siv = Cursive::new();
     ui::build(&mut siv, node(name).await);
     siv
+}
+
+/// The header clock is the only thing that changes with nothing happening, and
+/// cursive redraws the whole screen whenever it does. At seconds resolution
+/// that is a full repaint every second for the whole session, which a console
+/// that paints slowly shows as a permanent flicker -- the bug this guards.
+///
+/// Asserted on the rendered header rather than the format string, so it holds
+/// however the clock comes to be built.
+#[tokio::test]
+async fn test_the_header_clock_does_not_show_seconds() {
+    let mut siv = ui_for("alice").await;
+    let text = header(&mut siv);
+
+    assert!(
+        shows_time(&text, 2),
+        "the header should carry an HH:MM clock: {text}"
+    );
+    assert!(
+        !shows_time(&text, 3),
+        "an HH:MM:SS clock repaints the whole screen every second: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_the_header_names_you() {
+    let mut siv = ui_for("alice").await;
+    assert!(header(&mut siv).contains("alice"), "got {}", header(&mut siv));
 }
 
 #[tokio::test]

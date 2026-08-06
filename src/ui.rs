@@ -41,6 +41,15 @@ pub const DEFAULT_LISTEN: &str = "0.0.0.0:9999";
 /// Lines moved per PageUp/PageDown.
 const PAGE: usize = 10;
 
+/// Minutes rather than seconds, deliberately.
+///
+/// The header clock is the only thing on screen that changes on its own, and
+/// cursive redraws everything whenever it does. Showing seconds would mean a
+/// full repaint every second for the lifetime of the session, which a console
+/// that paints slowly renders as a permanent flicker. Nothing is lost: every
+/// message already carries its own timestamp, to the second.
+const CLOCK: &str = "%H:%M";
+
 /// True colour, so the palette matches the intended look rather than whichever
 /// sixteen colours the terminal happens to define.
 const GREEN: Color = Color::Rgb(0x2E, 0xE6, 0x4D);
@@ -104,7 +113,9 @@ pub fn build(siv: &mut Cursive, node: Node) {
 
     let layout = LinearLayout::vertical()
         .child(Panel::new(
-            TextView::new(header_text(&name)).h_align(HAlign::Center).with_name(HEADER),
+            TextView::new(header_text(&name, &Local::now().format(CLOCK).to_string()))
+                .h_align(HAlign::Center)
+                .with_name(HEADER),
         ))
         .child(
             Panel::new(
@@ -344,10 +355,25 @@ pub fn run(launcher: Launcher, mut events: UnboundedReceiver<Event>, startup: St
     let clock = siv.cb_sink().clone();
     handle.spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(1));
+        // What the header already shows.
+        //
+        // Cursive treats any delivered callback as activity and redraws the
+        // whole screen afterwards, whatever the callback actually did -- so
+        // this has to be checked before sending rather than inside. Sending one
+        // a second repaints everything a second, which on a console that paints
+        // slowly is a steady visible flicker with nothing happening on screen.
+        let mut showing = String::new();
         loop {
             tick.tick().await;
+
+            let now = Local::now().format(CLOCK).to_string();
+            if now == showing {
+                continue;
+            }
+            showing.clone_from(&now);
+
             if clock
-                .send(Box::new(|siv: &mut Cursive| {
+                .send(Box::new(move |siv: &mut Cursive| {
                     // Read back rather than captured, since the name is not
                     // known until the setup screen is done with.
                     let name = siv
@@ -355,7 +381,7 @@ pub fn run(launcher: Launcher, mut events: UnboundedReceiver<Event>, startup: St
                         .map(|state| state.name.clone())
                         .unwrap_or_default();
                     siv.call_on_name(HEADER, |view: &mut TextView| {
-                        view.set_content(header_text(&name));
+                        view.set_content(header_text(&name, &now));
                     });
                 }))
                 .is_err()
@@ -552,11 +578,8 @@ fn connect_pressed(siv: &mut Cursive, launcher: &Launcher) {
     }
 }
 
-fn header_text(name: &str) -> String {
-    format!(
-        "⌐ TIO CHAT ¬  User: {name}  ⌐ {} ¬",
-        Local::now().format("%H:%M:%S")
-    )
+fn header_text(name: &str, clock: &str) -> String {
+    format!("⌐ TIO CHAT ¬  User: {name}  ⌐ {clock} ¬")
 }
 
 /// Render one event into the message log.
