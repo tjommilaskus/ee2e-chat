@@ -23,8 +23,16 @@ and it looks like a terminal from 1984.
 
 ## Try it in thirty seconds
 
+**Linux and macOS**
+
 ```
 curl -fsSL https://raw.githubusercontent.com/tjommilaskus/ee2e-chat/main/install.sh | sh
+```
+
+**Windows** — in cmd or PowerShell, with [Rust](https://rustup.rs) installed:
+
+```
+cargo install --git https://github.com/tjommilaskus/ee2e-chat
 ```
 
 Then, on your machine:
@@ -231,18 +239,20 @@ e2ee update
 
 ### On Windows
 
-There is no install script. Install Rust from [rustup.rs](https://rustup.rs),
-then, from a clone, in either cmd or PowerShell:
+There is no install script; cargo does the work instead. Install Rust from
+[rustup.rs](https://rustup.rs), then, in either cmd or PowerShell:
 
 ```
-cargo install --path .
+cargo install --git https://github.com/tjommilaskus/ee2e-chat
 ```
+
+Or `cargo install --path .` from a clone, which is the same thing against
+source you already have.
 
 That puts `e2ee.exe` in `%USERPROFILE%\.cargo\bin`, which rustup already adds
-to your PATH. `cargo uninstall ee2e-chat` removes it. Since cargo does the
-installing, `e2ee update` does not apply and says so — update with `git pull`
-and `cargo install --path .`, or `cargo install --git` straight from the
-repository.
+to your PATH. `cargo uninstall ee2e-chat` removes it — the package name, not
+the command name. Re-running the install command upgrades in place, so
+`e2ee update` does not apply on Windows and says so rather than half-working.
 
 Two things worth knowing:
 
