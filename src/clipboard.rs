@@ -15,12 +15,34 @@ use std::process::{Command, Stdio};
 /// Wayland before X11, since a Wayland session often has the X11 tools present
 /// through XWayland and they would write to a clipboard nothing is reading.
 /// `pbcopy` is always present on macOS, so its position hardly matters.
+#[cfg(unix)]
 const TOOLS: &[(&str, &[&str])] = &[
     ("wl-copy", &[]),
     ("xclip", &["-selection", "clipboard"]),
     ("xsel", &["--clipboard", "--input"]),
     ("pbcopy", &[]),
 ];
+
+/// Windows ships `clip` with the system, so there is only ever one to try and
+/// never anything for the user to install.
+///
+/// It decodes its input using the console's active code page rather than UTF-8.
+/// That is invisible here because the only thing copied is a room code, and
+/// those are ASCII -- but copying arbitrary message text would need
+/// `Set-Clipboard` through PowerShell instead.
+#[cfg(not(unix))]
+const TOOLS: &[(&str, &[&str])] = &[("clip", &[])];
+
+/// What to tell someone who has no clipboard tool at all.
+#[cfg(unix)]
+const NO_TOOL: &str = "no clipboard tool found -- install wl-clipboard (Wayland) or xclip (X11). \
+                       macOS has pbcopy already, so seeing this there means PATH is unusual.";
+
+/// Nothing to install: `clip` is part of Windows. Missing it means the system
+/// directory has fallen off PATH, so that is what the message points at.
+#[cfg(not(unix))]
+const NO_TOOL: &str = "clip was not found, which should not happen on Windows -- \
+                       check that %SystemRoot%\\System32 is on your PATH.";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum CopyError {
@@ -32,11 +54,7 @@ pub enum CopyError {
 impl std::fmt::Display for CopyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CopyError::NoTool => write!(
-                f,
-                "no clipboard tool found -- install wl-clipboard (Wayland) or xclip (X11). \
-                 macOS has pbcopy already, so seeing this there means PATH is unusual."
-            ),
+            CopyError::NoTool => f.write_str(NO_TOOL),
             CopyError::Failed(why) => write!(f, "could not copy: {why}"),
         }
     }

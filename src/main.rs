@@ -34,8 +34,9 @@ struct Args {
     #[arg(long)]
     connect: Option<String>,
 
-    /// Where the long-term keypair is stored.
-    /// Defaults to $XDG_CONFIG_HOME/ee2e-chat/identity.
+    /// Where the long-term keypair is stored. Defaults to
+    /// $XDG_CONFIG_HOME/ee2e-chat/identity, or %APPDATA%\ee2e-chat\identity
+    /// on Windows.
     #[arg(long, value_name = "PATH")]
     identity: Option<PathBuf>,
 

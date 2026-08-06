@@ -220,7 +220,8 @@ accepts without asking. Or install it yourself:
 | Anywhere | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 
 Copying the room code wants a clipboard tool — `wl-clipboard` on Wayland,
-`xclip` on X11, `pbcopy` on macOS — but everything else works without one.
+`xclip` on X11, `pbcopy` on macOS, `clip` on Windows (already there) — but
+everything else works without one.
 
 Updating later:
 
@@ -228,21 +229,52 @@ Updating later:
 e2ee update
 ```
 
+### On Windows
+
+There is no install script. Install Rust from [rustup.rs](https://rustup.rs),
+then, from a clone, in either cmd or PowerShell:
+
+```
+cargo install --path .
+```
+
+That puts `e2ee.exe` in `%USERPROFILE%\.cargo\bin`, which rustup already adds
+to your PATH. `cargo uninstall ee2e-chat` removes it. Since cargo does the
+installing, `e2ee update` does not apply and says so — update with `git pull`
+and `cargo install --path .`, or `cargo install --git` straight from the
+repository.
+
+Two things worth knowing:
+
+- **Use Windows Terminal** — the default on Windows 11, and in the Store on
+  Windows 10 — or set your console font to Consolas or Cascadia Mono. Both cmd
+  and PowerShell work, but the box-drawing characters and 24-bit colours need a
+  font that has the glyphs. A legacy console still set to Raster Fonts shows
+  boxes where `▶` should be.
+- **Defender Firewall will ask** the first time you listen, which is exactly
+  what it is for. Allow it on private networks, or nobody can connect *to* you
+  — though you can still connect out to them.
+
 ### Platforms
 
 | | |
 |---|---|
 | **Linux** | Supported. Developed and tested here. |
 | **macOS** | Supported. Compiles cleanly, uses `pbcopy`. Config goes to `~/.config/ee2e-chat` rather than `~/Library/Application Support`. |
-| **Windows** | **Not supported** — it does not compile. |
+| **Windows** | Supported, in cmd and PowerShell. Config goes to `%APPDATA%\ee2e-chat`. Installs through cargo, so `e2ee update` does not apply. |
 
-Windows needs three things: the `0600` file permissions have no equivalent
-there, `$HOME` is generally unset so the config path cannot be resolved, and
-the clipboard needs `clip.exe`. Patches welcome; it has never been attempted.
+The one real difference is file permissions. On Unix the identity and room-code
+files are created `0600`, and one found wider is tightened and reported to you
+at startup. Windows has no mode bits: `%APPDATA%` already sits inside a profile
+directory whose ACL admits only its owner, so the protection is the
+filesystem's rather than this program's — which also means **there is no
+warning if you use `--identity` to put a key somewhere shared.** Choose that
+path with care on Windows.
 
 ### Your identity
 
-Your keypair lives at `~/.config/ee2e-chat/identity`, created on first run and
+Your keypair lives at `~/.config/ee2e-chat/identity`, or
+`%APPDATA%\ee2e-chat\identity` on Windows. It is created on first run and
 readable only by you. It is what keeps your fingerprint stable between
 sessions, so someone who verified it last week still recognises you.
 
@@ -336,3 +368,16 @@ cargo clippy --all-targets
 The tests are worth a look: they cover impersonation, replayed and reflected
 handshakes, tampered ciphertext, hostile gossip, and simultaneous dials — not
 just that a message arrives.
+
+CI runs all of it on Linux, macOS and Windows. Three permission tests are
+Unix-only, since Windows has no mode bits to assert on, so the count is lower
+there. `secretfile.rs`, `identity.rs`, `clipboard.rs` and `update.rs` are the
+four modules that branch by platform — from a Unix machine it is worth
+cross-checking that the Windows branch still compiles before pushing:
+
+```
+rustup target add x86_64-pc-windows-msvc
+cargo check --target x86_64-pc-windows-msvc --all-targets
+```
+
+`cargo check` does not link, so this needs no MSVC toolchain.

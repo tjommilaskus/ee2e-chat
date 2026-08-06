@@ -5,7 +5,12 @@
 
 use ee2e_chat::clipboard::{self, CopyError};
 
+#[cfg(unix)]
 const TOOLS: &[&str] = &["wl-copy", "xclip", "xsel", "pbcopy"];
+
+/// Windows ships `clip`, so there is only one and it is always installed.
+#[cfg(not(unix))]
+const TOOLS: &[&str] = &["clip"];
 
 fn any_tool_installed() -> bool {
     TOOLS.iter().any(|tool| which(tool).is_some())
@@ -27,6 +32,11 @@ fn test_copying_either_works_or_explains_itself() {
             TOOLS.contains(&tool),
             "reported an unexpected tool: {tool}"
         ),
+        // `clip` is always present on Windows, but a session with no window
+        // station -- CI, or a service -- has no clipboard for it to write to.
+        // Saying so is the contract holding, not breaking.
+        #[cfg(not(unix))]
+        Err(CopyError::Failed(_)) => {}
         Err(e) => {
             assert!(
                 !any_tool_installed(),
@@ -39,6 +49,7 @@ fn test_copying_either_works_or_explains_itself() {
 
 /// The message has to name something installable. Told only that it failed, a
 /// user has nothing to act on.
+#[cfg(unix)]
 #[test]
 fn test_the_missing_tool_message_says_what_to_install() {
     let message = CopyError::NoTool.to_string();
@@ -46,6 +57,17 @@ fn test_the_missing_tool_message_says_what_to_install() {
     assert!(message.contains("wl-clipboard"), "got: {message}");
     assert!(message.contains("xclip"), "got: {message}");
     assert!(message.contains("Wayland"), "got: {message}");
+}
+
+/// Nothing is installable on Windows -- `clip` is part of the system -- so the
+/// message has to point at the only thing that could actually be wrong.
+#[cfg(not(unix))]
+#[test]
+fn test_the_missing_tool_message_points_at_path() {
+    let message = CopyError::NoTool.to_string();
+
+    assert!(message.contains("clip"), "got: {message}");
+    assert!(message.contains("PATH"), "got: {message}");
 }
 
 /// Copying is a convenience. Failing it must never be able to stop the program,
@@ -59,7 +81,16 @@ fn test_copying_never_panics() {
 
 /// macOS ships pbcopy, so a build that does not know about it would report "no
 /// clipboard tool" on a machine that plainly has one.
+#[cfg(unix)]
 #[test]
 fn test_pbcopy_is_among_the_tools_tried() {
     assert!(TOOLS.contains(&"pbcopy"), "macOS would have no clipboard");
+}
+
+/// The same trap on Windows: `clip` is always there, so failing to try it would
+/// report no clipboard on a machine that certainly has one.
+#[cfg(not(unix))]
+#[test]
+fn test_clip_is_among_the_tools_tried() {
+    assert!(TOOLS.contains(&"clip"), "Windows would have no clipboard");
 }

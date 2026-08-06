@@ -1,0 +1,25 @@
+name: ci
+
+# Windows is the reason this exists. secretfile.rs, identity.rs, clipboard.rs
+# and update.rs each take a different branch there, and a Unix machine cannot
+# run any of them.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      # Every platform reports, rather than the first failure hiding the rest.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # The runners ship a recent stable, but edition 2024 needs 1.85 and an
+      # image lagging behind would fail in a way that looks like a code fault.
+      - run: rustup update stable && rustup default stable
+      - run: cargo build --release
+      - run: cargo test
+      - run: cargo clippy --all-targets -- -D warnings

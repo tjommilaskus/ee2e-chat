@@ -14,12 +14,36 @@
 //! name and renames it into place, which swaps the directory entry rather than
 //! writing through the inode this process is executing from.
 
+// Everything below the Windows `run` is the install.sh path, and unused there.
+#[cfg(unix)]
 use std::ffi::OsStr;
+#[cfg(unix)]
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::Command;
 
 const REPO_URL: &str = "https://github.com/tjommilaskus/ee2e-chat.git";
 
+/// Windows installs through cargo rather than `install.sh`, so there is no
+/// script here to delegate to.
+///
+/// It says so and stops, rather than half-working. Reimplementing the update
+/// against `cargo install` would put the binary somewhere the Unix path's
+/// prefix and name detection knows nothing about, so the two platforms would
+/// quietly disagree about what "update" means and where the result landed --
+/// worse than a command that is honest about not applying.
+#[cfg(not(unix))]
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    Err(format!(
+        "`update` is not available on Windows, which installs through cargo \
+         rather than install.sh.\n\nUpdate from a checkout instead:\n\n    \
+         git pull\n    cargo install --path .\n\nOr, without a checkout:\n\n    \
+         cargo install --git {REPO_URL}"
+    )
+    .into())
+}
+
+#[cfg(unix)]
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
     let prefix = prefix_for(&exe)?;
@@ -76,6 +100,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// Refused unless the binary sits in a `bin` directory, because anywhere else
 /// means this is a development build or an unusual layout, and guessing a
 /// prefix there could install over something unrelated.
+#[cfg(unix)]
 fn prefix_for(exe: &Path) -> Result<PathBuf, String> {
     let bin_dir = exe
         .parent()
@@ -96,6 +121,7 @@ fn prefix_for(exe: &Path) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("could not work out a prefix from {}", bin_dir.display()))
 }
 
+#[cfg(unix)]
 fn clone(into: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let status = Command::new("git")
         .arg("clone")
@@ -118,6 +144,7 @@ fn clone(into: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn install(source: &Path, prefix: &Path, name: &OsStr) -> Result<(), Box<dyn std::error::Error>> {
     let script = source.join("install.sh");
     if !script.is_file() {
@@ -145,14 +172,17 @@ fn install(source: &Path, prefix: &Path, name: &OsStr) -> Result<(), Box<dyn std
     Ok(())
 }
 
+#[cfg(unix)]
 fn modified(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
 }
 
 /// A directory removed when it goes out of scope, including on the early
 /// returns above -- so a failed update does not leave a clone behind.
+#[cfg(unix)]
 struct TempDir(PathBuf);
 
+#[cfg(unix)]
 impl TempDir {
     fn new() -> std::io::Result<Self> {
         let path = std::env::temp_dir().join(format!("chat-update-{}", std::process::id()));
@@ -166,6 +196,7 @@ impl TempDir {
     }
 }
 
+#[cfg(unix)]
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);

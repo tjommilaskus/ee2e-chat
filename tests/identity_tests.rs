@@ -1,6 +1,7 @@
 use ee2e_chat::crypto;
 use ee2e_chat::identity::{self, IdentityError};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -11,6 +12,7 @@ fn scratch() -> (TempDir, PathBuf) {
     (dir, path)
 }
 
+#[cfg(unix)]
 fn mode_of(path: &PathBuf) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
@@ -47,7 +49,17 @@ fn test_two_identities_are_different() {
     assert_ne!(a.keypair.secret_key, b.keypair.secret_key);
 }
 
+// ---------------------------------------------------------------------------
+// File permissions
+//
+// Unix only. Windows has no mode bits: these files sit under %APPDATA%, in a
+// profile directory whose ACL already restricts them to their owner, so there
+// is nothing for this program to set and nothing to assert about. See
+// `tighten_if_needed` in src/secretfile.rs.
+// ---------------------------------------------------------------------------
+
 /// A private key readable by anyone else on the machine is not private.
+#[cfg(unix)]
 #[test]
 fn test_the_key_file_is_created_private() {
     let (_dir, path) = scratch();
@@ -60,6 +72,7 @@ fn test_the_key_file_is_created_private() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn test_the_directory_is_created_private() {
     let (_dir, path) = scratch();
@@ -70,6 +83,7 @@ fn test_the_directory_is_created_private() {
 }
 
 /// An exposed key is corrected and reported rather than used quietly.
+#[cfg(unix)]
 #[test]
 fn test_an_over_permissive_file_is_tightened_and_reported() {
     let (_dir, path) = scratch();
@@ -108,6 +122,9 @@ fn test_a_correctly_permissioned_file_is_not_remarked_on() {
 fn write_identity(path: &PathBuf, contents: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, contents).unwrap();
+    // Written private so these cases test the damage they mean to, rather than
+    // tripping the permission warning on the way in.
+    #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
 }
 
@@ -199,12 +216,18 @@ fn test_a_reloaded_identity_can_still_decrypt() {
     assert_eq!(plaintext, b"still works");
 }
 
+/// `$XDG_CONFIG_HOME` on Unix, `%APPDATA%` on Windows -- the assertion is the
+/// same either way, since only the shape can be checked: the environment
+/// belongs to whoever is running the tests.
 #[test]
-fn test_default_path_follows_xdg() {
-    // Only asserts the shape, since the environment belongs to whoever is
-    // running the tests.
+fn test_default_path_is_under_the_config_directory() {
     let path = identity::default_path().expect("a path");
-    assert!(path.ends_with("ee2e-chat/identity"), "got {}", path.display());
+    // Compared component-wise, so it holds under either separator.
+    assert!(
+        path.ends_with(PathBuf::from("ee2e-chat").join("identity")),
+        "got {}",
+        path.display()
+    );
     assert!(path.is_absolute());
 }
 

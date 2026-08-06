@@ -24,6 +24,13 @@ struct StoredIdentity {
 
 const VERSION: u8 = 1;
 
+/// Named when no config directory can be worked out, so the message points at
+/// variables the reader's system actually has.
+#[cfg(unix)]
+const CONFIG_VARS: &str = "neither $XDG_CONFIG_HOME nor $HOME is set";
+#[cfg(not(unix))]
+const CONFIG_VARS: &str = "neither %APPDATA% nor %USERPROFILE% is set";
+
 #[derive(Debug)]
 pub enum IdentityError {
     NoConfigDir,
@@ -35,7 +42,7 @@ impl fmt::Display for IdentityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             IdentityError::NoConfigDir => {
-                write!(f, "could not work out where to store the identity: neither $XDG_CONFIG_HOME nor $HOME is set")
+                write!(f, "could not work out where to store the identity: {CONFIG_VARS}")
             }
             IdentityError::Io { path, source } => {
                 write!(f, "{}: {source}", path.display())
@@ -56,15 +63,38 @@ fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> IdentityError + '_ {
     }
 }
 
-/// Where this program keeps its files, following the XDG spec.
+/// Where this program keeps its files.
 pub fn config_dir() -> Result<PathBuf, IdentityError> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+    base_dir().map(|base| base.join("ee2e-chat"))
+}
+
+/// The XDG spec's config directory.
+#[cfg(unix)]
+fn base_dir() -> Result<PathBuf, IdentityError> {
+    std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .ok_or(IdentityError::NoConfigDir)?;
+        .ok_or(IdentityError::NoConfigDir)
+}
 
-    Ok(base.join("ee2e-chat"))
+/// Windows' per-user application data directory.
+///
+/// `%APPDATA%` rather than `%LOCALAPPDATA%` because a roaming profile should
+/// carry these with it. The point of storing a key is that the fingerprint
+/// somebody verified still matches, and that should not depend on which machine
+/// in a domain they happen to sign in to -- a fingerprint that changes when you
+/// switch PCs is precisely the signal that means somebody is impersonating you.
+#[cfg(not(unix))]
+fn base_dir() -> Result<PathBuf, IdentityError> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .map(|home| PathBuf::from(home).join("AppData").join("Roaming"))
+        })
+        .ok_or(IdentityError::NoConfigDir)
 }
 
 /// Where the identity lives unless told otherwise.
