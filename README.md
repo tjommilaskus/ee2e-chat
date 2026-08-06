@@ -254,8 +254,17 @@ to your PATH. `cargo uninstall ee2e-chat` removes it — the package name, not
 the command name. Re-running the install command upgrades in place, so
 `e2ee update` does not apply on Windows and says so rather than half-working.
 
-Two things worth knowing:
+Three things worth knowing:
 
+- **A first Rust install needs a linker**, which is better known before you
+  start than after. The default toolchain links with Microsoft's, so
+  `rustup-init` checks for the Visual Studio C++ Build Tools and offers to
+  fetch them when they are missing — accept. It is a large download, comfortably
+  over a gigabyte, and there is no way around it: without a linker the build
+  compiles everything and only then fails, with `link.exe not found`. Machines
+  that already have Visual Studio are fine. If that download is not one you can
+  take, `rustup default stable-gnu` switches to a toolchain shipping its own
+  linker, which needs none of it.
 - **Use Windows Terminal** — the default on Windows 11, and in the Store on
   Windows 10 — or set your console font to Consolas or Cascadia Mono. Both cmd
   and PowerShell work, but the box-drawing characters and 24-bit colours need a
