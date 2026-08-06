@@ -26,6 +26,11 @@ sha2 = "0.10"
 hmac = "0.12"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 rand = "0.8"
+# Cursive repaints every view on every keystroke and sends the lot to the
+# terminal, wipe included. This wraps the backend to write only the cells that
+# changed, which is the difference between a usable interface and a flickering
+# one on a console that paints slowly -- a legacy Windows console in particular.
+cursive_buffered_backend = "0.6.2"
 
 [dev-dependencies]
 tokio-test = "0.4"

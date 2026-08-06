@@ -317,6 +317,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cursive_buffered_backend"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf6287f9e06f44558a3264976e70c51187482a0271d48abfd88f0d3af18d3ee6"
+dependencies = [
+ "cursive_core",
+ "enumset",
+ "log",
+ "smallvec",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
 name = "cursive_core"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -421,6 +435,7 @@ dependencies = [
  "chrono",
  "clap",
  "cursive",
+ "cursive_buffered_backend",
  "futures",
  "hmac",
  "rand",

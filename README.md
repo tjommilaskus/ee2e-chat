@@ -64,7 +64,7 @@ the middle — the same mechanism as Signal's safety numbers.
 introduces the rest, and the room assembles itself into a full mesh with every
 pair connected directly.
 
-**Small enough to read.** About 3,100 lines of Rust and 136 tests, on 13 direct
+**Small enough to read.** About 3,300 lines of Rust and 142 tests, on 14 direct
 dependencies. Nothing runs in the background, nothing phones home, and there is
 no daemon to forget you installed.
 
@@ -371,7 +371,7 @@ accordingly against what you would use it for.
 ## Development
 
 ```
-cargo test                    # 136 tests
+cargo test                    # 142 tests
 cargo clippy --all-targets
 ```
 

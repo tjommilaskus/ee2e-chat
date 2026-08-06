@@ -12,6 +12,9 @@
 
 use crate::clipboard;
 use crate::crypto::Keypair;
+use cursive::backend::Backend;
+use cursive::backends::crossterm::crossterm;
+use cursive_buffered_backend::BufferedBackend;
 use crate::node::{Event, Node, NodeConfig};
 use crate::room::RoomCode;
 use chrono::Local;
@@ -332,7 +335,21 @@ pub fn prepare(siv: &mut Cursive) {
 /// at once. Without one the setup screen is shown, prefilled with whatever else
 /// was supplied, and the node starts when the user presses Connect.
 pub fn run(launcher: Launcher, mut events: UnboundedReceiver<Event>, startup: Startup) {
-    let mut siv = cursive::default();
+    // Wrapped rather than used directly, because cursive redraws every view on
+    // every keystroke and the bare backend sends all of it to the terminal: a
+    // full-screen wipe followed by a repaint, through a buffer too small to
+    // hold one styled frame at true colour, so the console is handed a
+    // part-drawn screen. On a console that paints slowly that is a visible
+    // flicker on every key pressed.
+    //
+    // The wrapper keeps what is already on screen, compares the new frame
+    // against it, and writes only the cells that differ -- for a keystroke,
+    // the input line. It also stops emitting the wipe, which is the part that
+    // actually shows.
+    let mut siv = cursive::CursiveRunnable::new(|| {
+        let backend = cursive::backends::crossterm::Backend::init()?;
+        Ok::<_, crossterm::ErrorKind>(Box::new(BufferedBackend::new(backend)) as Box<dyn Backend>)
+    });
     prepare(&mut siv);
 
     bind_keys(&mut siv);
